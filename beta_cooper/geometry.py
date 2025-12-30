@@ -4,14 +4,14 @@ from sklearn.cluster import DBSCAN
 
 class BarrelGeometry:
     """
-    BarrelGeometry V15 (Final Production)
+    BarrelGeometry V23 (Multi-Extract Purify & Safe Rescue)
     
-    Refinements:
-    1. Full Audit: 'n_dropped_short' now tracks drops from ALL phases (Init, Split, Re-segment).
-    2. Scale Sync: Re-segmentation after DBSCAN uses a relaxed gap threshold (6.0A) 
-       to match DBSCAN's eps (6.5A), preventing artificial fragmentation of 
-       connected densities.
-    3. Architecture: Retains V14's safe 'Split -> Filter -> DBSCAN' pipeline.
+    Final Polish:
+    1. Purify: Now extracts MULTIPLE sub-segments from a single raw segment if they 
+       belong to different valid clusters (fixes 'dropped half-barrel').
+    2. Rescue: Splitters now default to returning [seg] instead of empty list to 
+       prevent silent deletion. Rescue uses min_len=3 for finer granularity.
+    3. Audit: Precise outlier counting using boolean masks.
     """
 
     def __init__(self, segments, all_coords, residue_ids=None):
@@ -22,10 +22,25 @@ class BarrelGeometry:
             'n_splits': 0, 'n_merges': 0, 'n_flips': 0, 
             'n_dropped_short': 0, 'n_linear_splits': 0,
             'n_rejected_helices': 0, 'n_rejected_outliers': 0,
-            'status': 'OK', 'parity_method': 'None'
+            'status': 'OK', 'parity_method': 'None',
+            'rescue_triggered': False,
+            'rescue_success': False,
+            'keep_ratio': 0.0,
+            'dbscan_clusters_kept': 0
+        }
+
+        # Configuration
+        self.match_cfg = {
+            'MAX_DIST': 4.5,
+            'MIN_COS': 0.5,
+            'MAX_Z_DIFF': 6.0,
+            'MAX_THETA_DIFF': 1.2,
+            'FLIP_MARGIN': 0.5,
+            'R_GATE': 2.0,       
+            'MAX_R_DIFF': 3.0    
         }
         
-        # 1. Standardization (Auto-segment with strict 4.5A physics)
+        # 1. Standardization
         if not segments and len(all_coords) > 0:
             initial_segments = self._auto_segment_coords(all_coords, gap_threshold=4.5)
         else:
@@ -33,9 +48,14 @@ class BarrelGeometry:
             if not initial_segments and len(all_coords) > 0:
                 initial_segments = self._auto_segment_coords(all_coords, gap_threshold=4.5)
 
-        # 2. THE PURGE
-        self.clean_segments, self.clean_coords = self._purify_pipeline_v15(initial_segments)
+        # 2. THE PURGE (V23: Multi-Extract)
+        self.clean_segments, self.clean_coords = self._purify_pipeline_v23(initial_segments)
         
+        # Audit Keep Ratio
+        n_raw = len(all_coords)
+        n_clean = len(self.clean_coords)
+        self.audit['keep_ratio'] = round(n_clean / max(1, n_raw), 3)
+
         self.params = {
             'n_strands': 0, 'shear_S': 0, 
             'radius': 0.0, 'tilt_angle': 0.0, 'height': 0.0
@@ -43,56 +63,58 @@ class BarrelGeometry:
         
         if len(self.clean_coords) > 15:
             self._align_system_robust()
-            self._refine_topology_v15()
+            
+            # 3. Topology Refinement
+            self._refine_topology_v22(pool_source=self.aligned_segments)
+            
+            # 4. Under-count Rescue (V23: min_len=3)
+            if 0 < len(self.strands) <= 6:
+                self._rescue_under_count_v23()
+            
+            # 5. Physics
             self._calculate_physics()
         else:
-            self.audit['status'] = 'Insufficient_Points_After_Purge'
+            if self.audit['status'] == 'OK':
+                self.audit['status'] = 'Insufficient_Points_After_Purge'
         
         self.params.update(self.audit)
 
     def _auto_segment_coords(self, coords, gap_threshold=4.5):
-        """
-        Standard gap-based segmentation.
-        Includes built-in audit for dropped short segments.
-        """
         segments = []
         if len(coords) == 0: return []
         current_seg = [coords[0]]
         for i in range(1, len(coords)):
-            # Use customizable threshold (4.5 for physics, 6.0 for DBSCAN cleanup)
             if np.linalg.norm(coords[i] - coords[i-1]) > gap_threshold:
                 if len(current_seg) >= 3: 
                     segments.append(np.array(current_seg))
                 else:
-                    self.audit['n_dropped_short'] += 1 # Audit here
+                    self.audit['n_dropped_short'] += 1
                 current_seg = []
             current_seg.append(coords[i])
-        
-        # Flush last
         if len(current_seg) >= 3: 
             segments.append(np.array(current_seg))
         else:
-            self.audit['n_dropped_short'] += 1 # Audit here
-            
+            self.audit['n_dropped_short'] += 1
         return segments
 
-    def _purify_pipeline_v15(self, initial_segments):
+    def _purify_pipeline_v23(self, initial_segments):
         """
-        Pipeline: Split (Kinks) -> Filter (Helices) -> DBSCAN (Noise).
+        V23 Update: Multi-Extraction per segment.
+        Extracts ALL valid sub-segments belonging to kept clusters, 
+        fixing the issue where a segment spanning two clusters lost half its data.
         """
         if not initial_segments: return [], np.array([])
-
-        # --- Phase 1: Pre-Filter Splitting ---
+        
+        # 1. Split
         splitted_segments = []
         for seg in initial_segments:
-            sub_segs = self._scan_and_split(seg)
+            sub_segs = self._scan_and_split(seg, cos_threshold=-0.2)
             if len(sub_segs) > 1: self.audit['n_splits'] += (len(sub_segs) - 1)
             splitted_segments.extend(sub_segs)
 
-        # --- Phase 2: Geometry Filter (Helix Removal) ---
+        # 2. Filter Helices
         candidates = []
         for seg in splitted_segments:
-            # Audit: Catch fragments made too short by splitting
             if len(seg) < 3: 
                 self.audit['n_dropped_short'] += 1
                 continue
@@ -101,168 +123,341 @@ class BarrelGeometry:
             len_direct = np.linalg.norm(v_start)
             len_path = np.sum([np.linalg.norm(seg[k] - seg[k-1]) for k in range(1, len(seg))])
             linearity = len_direct / (len_path + 1e-6)
+            pca = PCA(n_components=min(3, len(seg)))
+            pca.fit(seg)
+            residual = np.sqrt(np.sum(pca.explained_variance_[1:])) if len(seg) > 3 else 0.0
             
-            # Threshold 0.60: Keep curved strands, reject helices (<0.5)
-            if linearity > 0.60:
-                candidates.append(seg)
-            else:
-                self.audit['n_rejected_helices'] += 1
+            keep = False
+            if linearity > 0.80: keep = True
+            elif linearity > 0.60 and residual < 2.5: keep = True
+            
+            if keep: candidates.append(seg)
+            else: self.audit['n_rejected_helices'] += 1
         
         if not candidates: return [], np.array([])
         
-        # --- Phase 3: Spatial DBSCAN (Segment-Aware) ---
+        # 3. DBSCAN (Dual Cluster + Multi-Extract)
         all_candidate_coords = np.vstack(candidates)
-        
         try:
-            # eps=6.5 matches the looseness of beta-sheet connectivity
             clustering = DBSCAN(eps=6.5, min_samples=4).fit(all_candidate_coords)
             labels = clustering.labels_
+            unique_labels = list(set(labels) - {-1})
             
-            unique_labels = set(labels)
-            if -1 in unique_labels: unique_labels.remove(-1)
             if not unique_labels: return [], np.array([])
             
-            largest_label = max(unique_labels, key=lambda l: np.sum(labels == l))
+            # Select Clusters
+            counts = {l: np.sum(labels == l) for l in unique_labels}
+            sorted_labels = sorted(unique_labels, key=lambda l: counts[l], reverse=True)
             
+            valid_labels = {sorted_labels[0]}
+            self.audit['dbscan_clusters_kept'] = 1
+            if len(sorted_labels) > 1:
+                l1, l2 = sorted_labels[0], sorted_labels[1]
+                if counts[l2] >= 0.4 * counts[l1]:
+                    valid_labels.add(l2)
+                    self.audit['dbscan_clusters_kept'] = 2
+
             final_segments = []
             cursor = 0
-            kept_count = 0
-            
             for seg in candidates:
                 seg_len = len(seg)
                 seg_labels = labels[cursor : cursor + seg_len]
                 cursor += seg_len
                 
-                # Filter atoms: Keep only those in the main cluster
-                mask = (seg_labels == largest_label)
+                # V23 Fix: Allow extracting multiple sub-segments from different clusters
+                kept_mask = np.zeros(seg_len, dtype=bool)
+                new_subsegs = []
+
+                for lab in valid_labels:
+                    idx = np.where(seg_labels == lab)[0]
+                    if len(idx) < 3: continue
+                    
+                    split_locs = np.where(np.diff(idx) != 1)[0] + 1
+                    groups = np.split(idx, split_locs)
+                    # We only take the best group *for this label* to keep it simple,
+                    # but we do it for EACH valid label.
+                    g = max(groups, key=len)
+                    
+                    if len(g) < 3: continue
+                    
+                    s, e = int(g[0]), int(g[-1])
+                    new_subsegs.append(seg[s:e+1])
+                    kept_mask[s:e+1] = True
                 
-                # Drop segment if mostly noise (<3 atoms left)
-                if np.sum(mask) < 3: 
-                    self.audit['n_rejected_outliers'] += seg_len # Count atoms lost
-                    continue 
+                if not new_subsegs:
+                    self.audit['n_rejected_outliers'] += seg_len
+                    continue
                 
-                clean_seg = seg[mask]
-                kept_count += len(clean_seg)
-                self.audit['n_rejected_outliers'] += (seg_len - len(clean_seg))
+                # Correct outlier counting
+                self.audit['n_rejected_outliers'] += int(seg_len - kept_mask.sum())
+                final_segments.extend(new_subsegs)
                 
-                # Re-segmentation: Use relaxed gap (6.0) to match DBSCAN eps (6.5)
-                # This prevents splitting strands that DBSCAN thought were connected.
-                internal_sub_segs = self._auto_segment_coords(clean_seg, gap_threshold=6.0)
-                final_segments.extend(internal_sub_segs)
-            
-            if final_segments:
-                final_coords = np.vstack(final_segments)
-            else:
-                final_coords = np.array([])
-                
+            final_coords = np.vstack(final_segments) if final_segments else np.array([])
             return final_segments, final_coords
 
-        except Exception as e:
-            print(f"Warning: DBSCAN failed ({e}), using helix-filtered data.")
+        except Exception:
+            self.audit['status'] = 'DBSCAN_Fallback'
             return candidates, all_candidate_coords
 
+    def _endpoint_anchor(self, seg, which='head', w=4):
+        w = min(w, len(seg))
+        pts = seg[:w] if which == 'head' else seg[-w:]
+        if len(pts) == 0: return seg[0]
+        
+        r = np.linalg.norm(pts[:, :2], axis=1)
+        gate = self.match_cfg.get('R_GATE', 2.0)
+        good_indices = np.where(r > gate)[0]
+        
+        if len(good_indices) > 0:
+            return np.mean(pts[good_indices], axis=0)
+        return np.mean(pts, axis=0)
+
     def _align_system_robust(self):
-        """Align Barrel Axis to Z."""
         self.centroid = np.mean(self.clean_coords, axis=0)
         centered = self.clean_coords - self.centroid
-        
         pca = PCA(n_components=3)
         pca.fit(centered)
-        vars = pca.explained_variance_
         basis = pca.components_
-        
-        eps = 1e-9
+        vars = pca.explained_variance_
         candidates = []
+        eps = 1e-9
         for i in range(3):
             others = [k for k in range(3) if k != i]
-            v1 = vars[others[0]]
-            v2 = vars[others[1]]
+            v1, v2 = vars[others[0]], vars[others[1]]
             metric = abs(np.log((v1 + eps) / (v2 + eps)))
-            candidates.append((i, metric, vars[i]))
-        
+            candidates.append((i, metric))
         candidates.sort(key=lambda x: x[1])
-        best = candidates[0]
-        
-        if len(candidates) > 1 and abs(candidates[1][1] - best[1]) < 0.02:
-            if candidates[1][2] > best[2]:
-                best = candidates[1]
-                
-        best_axis_idx = best[0]
+        best_axis_idx = candidates[0][0]
         z_vec = basis[best_axis_idx]
         others = [k for k in range(3) if k != best_axis_idx]
         x_vec = basis[others[0]]
-        
         z_vec /= np.linalg.norm(z_vec)
         x_vec /= np.linalg.norm(x_vec)
         x_vec = x_vec - np.dot(x_vec, z_vec) * z_vec
         x_vec /= np.linalg.norm(x_vec)
         y_vec = np.cross(z_vec, x_vec)
-        
         self.rotation_matrix = np.vstack([x_vec, y_vec, z_vec])
-        
         self.aligned_segments = []
         for seg in self.clean_segments:
             seg_local = (seg - self.centroid) @ self.rotation_matrix.T 
             self.aligned_segments.append(seg_local)
 
-    def _refine_topology_v15(self):
-        """Merge Logic + Decomposition + Parity."""
-        merged = []
-        pool = [s for s in self.aligned_segments if len(s) >= 3]
-        
-        if pool:
-            merged = [pool[0]]
-            for i in range(1, len(pool)):
-                prev = merged[-1]
-                curr = pool[i]
-                
-                dist_direct = np.linalg.norm(curr[0] - prev[-1])
-                dist_flip = np.linalg.norm(curr[-1] - prev[-1])
-                
-                target_seg = curr
-                dist = dist_direct
-                
-                # Flip Check
-                if (dist_flip < dist_direct - 0.5) and (dist_flip < 6.0):
-                    target_seg = curr[::-1]
-                    dist = dist_flip
-                    self.audit['n_flips'] += 1
-                
-                v1 = self._get_strand_vector(prev)
-                v2 = self._get_strand_vector(target_seg)
-                cos_sim = np.dot(v1, v2)
-                
-                should_merge = False
-                if dist < 4.0 and cos_sim > -0.2: should_merge = True
-                elif dist < 6.0 and cos_sim > 0.7: should_merge = True
-                
-                if should_merge:
-                    merged[-1] = np.vstack((prev, target_seg))
-                    self.audit['n_merges'] += 1
-                else:
-                    merged.append(target_seg)
-        else:
-            merged = pool # Fix: Handle single/empty pool case gracefully
-        
-        self.strands = []
-        for m in merged:
-            if len(m) >= 3:
-                self.strands.append({
-                    'coords': m,
-                    'vector': self._get_strand_vector(m)
-                })
+    def _refine_topology_v22(self, pool_source, cfg=None):
+        active_pool = []
+        for i, seg in enumerate(pool_source):
+            if len(seg) < 3: continue
+            head_anchor = self._endpoint_anchor(seg, 'head', w=4)
+            tail_anchor = self._endpoint_anchor(seg, 'tail', w=4)
+            active_pool.append({
+                'coords': seg,
+                'head': head_anchor,
+                'tail': tail_anchor,
+                'vec': self._get_strand_vector(seg),
+                'used': False,
+                'id': i
+            })
 
-        # Global Decomposition
+        merged_strands = []
+        while True:
+            seed = None
+            for s in active_pool:
+                if not s['used']:
+                    seed = s
+                    break
+            if not seed: break
+            seed['used'] = True
+            
+            curr = seed
+            fwd_chain = []
+            while True:
+                match = self._find_best_match_v20(curr, active_pool, direction='forward', cfg=cfg)
+                if match:
+                    cand, is_flip = match
+                    if is_flip: self._flip_segment(cand)
+                    cand['used'] = True
+                    fwd_chain.append(cand)
+                    curr = cand
+                    self.audit['n_merges'] += 1
+                else: break
+            
+            curr = seed
+            bwd_chain = []
+            while True:
+                match = self._find_best_match_v20(curr, active_pool, direction='backward', cfg=cfg)
+                if match:
+                    cand, is_flip = match
+                    if is_flip: self._flip_segment(cand)
+                    cand['used'] = True
+                    bwd_chain.append(cand)
+                    curr = cand
+                    self.audit['n_merges'] += 1
+                else: break
+            
+            full_chain = bwd_chain[::-1] + [seed] + fwd_chain
+            combined_coords = np.vstack([x['coords'] for x in full_chain])
+            merged_strands.append({
+                'coords': combined_coords,
+                'vector': self._get_strand_vector(combined_coords)
+            })
+
+        self.strands = merged_strands
         self._decompose_complex_strands_safe()
-        
-        # Parity
         if len(self.strands) % 2 != 0:
             self._fix_parity()
+
+    def _find_best_match_v20(self, curr, pool, direction, cfg=None):
+        cfg = self.match_cfg if cfg is None else cfg
+        MAX_DIST = cfg['MAX_DIST']
+        MIN_COS = cfg['MIN_COS']
+        MAX_Z_DIFF = cfg['MAX_Z_DIFF']
+        MAX_THETA_DIFF = cfg['MAX_THETA_DIFF']
+        FLIP_MARGIN = cfg['FLIP_MARGIN']
+        R_GATE = cfg['R_GATE']
+        MAX_R_DIFF = cfg['MAX_R_DIFF']
+
+        if direction == 'forward':
+            ref_point = curr['tail']
+            ref_vec = curr['vec']
+        else: 
+            ref_point = curr['head']
+            ref_vec = curr['vec'] 
+            
+        best_match = None
+        best_cost = 999.0
+        ref_r = np.linalg.norm(ref_point[:2])
+        use_theta = ref_r > R_GATE
+        ref_theta = np.arctan2(ref_point[1], ref_point[0]) if use_theta else 0.0
+
+        for cand in pool:
+            if cand['used']: continue
+            if direction == 'forward':
+                pt_norm, pt_flip = cand['head'], cand['tail']
+            else:
+                pt_norm, pt_flip = cand['tail'], cand['head']
+            
+            d_norm = np.linalg.norm(ref_point - pt_norm)
+            d_flip = np.linalg.norm(ref_point - pt_flip)
+            is_flip = False
+            if d_flip < d_norm - FLIP_MARGIN:
+                is_flip = True
+                d = d_flip
+                chosen_pt = pt_flip
+                chosen_vec = -cand['vec']
+            else:
+                d = d_norm
+                chosen_pt = pt_norm
+                chosen_vec = cand['vec']
+
+            if d > MAX_DIST: continue
+            if np.dot(ref_vec, chosen_vec) < MIN_COS: continue 
+            if abs(ref_point[2] - chosen_pt[2]) > MAX_Z_DIFF: continue
+            cand_r = np.linalg.norm(chosen_pt[:2])
+            if abs(ref_r - cand_r) > MAX_R_DIFF: continue
+
+            theta_cost = 0.0
+            if use_theta and cand_r > R_GATE:
+                cand_theta = np.arctan2(chosen_pt[1], chosen_pt[0])
+                diff = abs(ref_theta - cand_theta)
+                diff = min(diff, 2*np.pi - diff)
+                if diff > MAX_THETA_DIFF: continue
+                theta_cost = diff
+
+            cost = d + 5.0 * (1.0 - np.dot(ref_vec, chosen_vec)) + 0.5 * theta_cost
+            if cost < best_cost:
+                best_cost = cost
+                best_match = (cand, is_flip)
+        return best_match
+
+    def _flip_segment(self, cand_obj):
+        cand_obj['coords'] = cand_obj['coords'][::-1]
+        cand_obj['head'], cand_obj['tail'] = cand_obj['tail'], cand_obj['head']
+        cand_obj['vec'] = -cand_obj['vec']
+        self.audit['n_flips'] += 1
+
+    def _rescue_under_count_v23(self):
+        """V23 Rescue: Uses min_len=3 for deep split."""
+        self.audit['rescue_triggered'] = True
+        n_before = len(self.strands)
+        refined_pool = []
+        for seg in self.aligned_segments:
+            # V23: Pass min_len=3 for granular split
+            refined_pool.extend(self._deep_split_under_count(seg, min_len=3))
+
+        strict_cfg = self.match_cfg.copy()
+        strict_cfg.update({
+            'MAX_DIST': 4.0,       
+            'MIN_COS': 0.65,       
+            'MAX_Z_DIFF': 5.0,     
+            'MAX_THETA_DIFF': 0.8, 
+            'FLIP_MARGIN': 0.8,
+            'MAX_R_DIFF': 2.0      
+        })
+
+        self.strands = []
+        self._refine_topology_v22(pool_source=refined_pool, cfg=strict_cfg)
+        n_after = len(self.strands)
+        is_success = (n_after >= 8) or (n_after >= n_before + 2)
+        if is_success:
+            self.audit['rescue_success'] = True
+            if len(refined_pool) > len(self.aligned_segments):
+                self.audit['n_splits'] += (len(refined_pool) - len(self.aligned_segments))
+
+    # --- Split Helpers (Safe V23) ---
+    def _split_by_z_turns(self, seg, min_len=4, dz_eps=0.2):
+        if len(seg) < 2 * min_len: return [seg]
+        z = seg[:, 2].copy()
+        z_s = z.copy()
+        z_s[1:-1] = (z[:-2] + z[1:-1] + z[2:]) / 3.0
+        dz = np.diff(z_s)
+        dz[np.abs(dz) < dz_eps] = 0.0
+        s = np.sign(dz)
+        for i in range(1, len(s)):
+            if s[i] == 0: s[i] = s[i-1]
+        for i in range(len(s)-2, -1, -1):
+            if s[i] == 0: s[i] = s[i+1]
+        changes = np.where(s[:-1] * s[1:] < 0)[0] + 1
+        cuts = [c for c in changes if c >= min_len and (len(seg) - c) >= min_len]
+        if not cuts: return [seg]
+        out, start = [], 0
+        for c in cuts:
+            out.append(seg[start:c])
+            start = c
+        out.append(seg[start:])
+        
+        # V23: Fallback safe
+        out = [x for x in out if len(x) >= min_len]
+        return out if out else [seg]
+
+    def _split_by_theta_span(self, seg, min_len=4, r_min=2.0, span_thr=1.3):
+        if len(seg) < 2 * min_len: return [seg]
+        r = np.linalg.norm(seg[:, :2], axis=1)
+        valid = r > r_min
+        if np.sum(valid) < 2 * min_len: return [seg]
+        theta = np.arctan2(seg[valid, 1], seg[valid, 0])
+        theta = np.unwrap(theta)
+        span = float(theta.max() - theta.min())
+        if span < span_thr: return [seg]
+        dtheta = np.abs(np.diff(theta))
+        k = int(np.argmax(dtheta))
+        valid_idx = np.where(valid)[0]
+        cut = int(valid_idx[k] + 1)
+        if cut < min_len or (len(seg) - cut) < min_len: return [seg]
+        return [seg[:cut], seg[cut:]]
+
+    def _deep_split_under_count(self, seg, min_len=4):
+        # V23: Accepts min_len
+        parts = self._scan_and_split(seg, cos_threshold=0.2)
+        out = []
+        for p in parts:
+            for p2 in self._split_by_z_turns(p, min_len=min_len):
+                for p3 in self._split_by_theta_span(p2, min_len=min_len):
+                    out.append(p3)
+        # Safety filter, but logic above usually guarantees seg return if failed
+        return [x for x in out if len(x) >= 3]
 
     def _decompose_complex_strands_safe(self):
         max_passes = 3
         min_len = 4
-        
         for _ in range(max_passes):
             new_strands = []
             any_split = False
@@ -271,86 +466,104 @@ class BarrelGeometry:
                 if len(coords) < min_len * 2: 
                     new_strands.append(s)
                     continue
-
                 v_start = coords[-1] - coords[0]
                 len_direct = np.linalg.norm(v_start)
                 len_path = np.sum([np.linalg.norm(coords[k] - coords[k-1]) for k in range(1, len(coords))])
                 linearity = len_direct / (len_path + 1e-6)
-                
-                if linearity < 0.70:
+                if linearity < 0.75:
                     p1, p2 = coords[0], coords[-1]
                     vec_line = p2 - p1
                     len_line = np.linalg.norm(vec_line)
-                    
-                    if len_line < 0.1: 
-                        split_idx = len(coords) // 2
+                    if len_line < 0.1: split_idx = len(coords) // 2
                     else:
                         vec_unit = vec_line / len_line
                         max_dist, split_idx = -1.0, -1
                         for k in range(min_len, len(coords) - min_len):
                             v_point = coords[k] - p1
                             t = np.dot(v_point, vec_unit)
-                            t_clamped = np.clip(t, 0, len_line)
-                            closest_pt_on_seg = p1 + t_clamped * vec_unit
-                            dist = np.linalg.norm(coords[k] - closest_pt_on_seg)
-                            
-                            if dist > max_dist:
-                                max_dist = dist
-                                split_idx = k
-                    
-                    if split_idx != -1:
-                        s1_c = coords[:split_idx]
-                        s2_c = coords[split_idx:]
-                        if len(s1_c) >= min_len and len(s2_c) >= min_len:
-                            new_strands.append({'coords': s1_c, 'vector': self._get_strand_vector(s1_c)})
-                            new_strands.append({'coords': s2_c, 'vector': self._get_strand_vector(s2_c)})
+                            closest = p1 + np.clip(t, 0, len_line) * vec_unit
+                            dist = np.linalg.norm(coords[k] - closest)
+                            if dist > max_dist: max_dist, split_idx = dist, k
+                    if split_idx != -1 and max_dist > 2.0: 
+                        s1 = coords[:split_idx]
+                        s2 = coords[split_idx:]
+                        if len(s1) >= min_len and len(s2) >= min_len:
+                            new_strands.append({'coords': s1, 'vector': self._get_strand_vector(s1)})
+                            new_strands.append({'coords': s2, 'vector': self._get_strand_vector(s2)})
                             any_split = True
                             self.audit['n_linear_splits'] += 1
-                        else:
-                            new_strands.append(s)
-                    else:
-                        new_strands.append(s)
-                else:
-                    new_strands.append(s)
+                        else: new_strands.append(s)
+                    else: new_strands.append(s)
+                else: new_strands.append(s)
             self.strands = new_strands
             if not any_split: break
 
-    def _scan_and_split(self, seg):
+    def _scan_and_split(self, seg, cos_threshold=-0.2):
         min_seg_len = 4
         if len(seg) < min_seg_len * 2: return [seg]
-        
         seg_smooth = seg.copy()
         for k in range(3):
             seg_smooth[1:-1, k] = (seg[:-2, k] + seg[1:-1, k] + seg[2:, k]) / 3.0
-        
-        window_size = 3
-        limit = len(seg) - 2 * window_size
-        best_split_idx = -1
-        min_cos = 1.0
-        
+        window = 3
+        limit = len(seg) - 2 * window
+        best_idx, min_cos = -1, 1.0
         for i in range(0, limit):
-            p0 = seg_smooth[i]
-            p1 = seg_smooth[i + window_size]
-            p2 = seg_smooth[i + 2 * window_size]
-            v1, v2 = p1 - p0, p2 - p1
+            p0, p1, p2 = seg_smooth[i], seg_smooth[i+window], seg_smooth[i+2*window]
+            v1, v2 = p1-p0, p2-p1
             n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
             if n1 < 0.1 or n2 < 0.1: continue
-            
             cos_val = np.dot(v1, v2) / (n1 * n2)
-            if cos_val < -0.2:
+            if cos_val < cos_threshold:
                 if cos_val < min_cos:
-                    split_cand = i + window_size
-                    if split_cand >= min_seg_len and (len(seg) - split_cand) >= min_seg_len:
-                        min_cos = cos_val
-                        best_split_idx = split_cand
-        
-        if best_split_idx != -1:
-            part1 = seg[:best_split_idx]
-            part2 = seg[best_split_idx:]
-            return self._scan_and_split(part1) + self._scan_and_split(part2)
+                    cand = i + window
+                    if cand >= min_seg_len and (len(seg)-cand) >= min_seg_len:
+                        min_cos, best_idx = cos_val, cand
+        if best_idx != -1:
+            return self._scan_and_split(seg[:best_idx], cos_threshold) + \
+                   self._scan_and_split(seg[best_idx:], cos_threshold)
         return [seg]
 
     def _fix_parity(self):
+        """V22 Logic: Lock Small N."""
+        n = len(self.strands)
+        if n % 2 == 0: return
+
+        if n <= 8:
+            lens = [len(s['coords']) for s in self.strands]
+            idx = int(np.argmax(lens))
+            coords = self.strands[idx]['coords']
+            min_len = 3 
+
+            if len(coords) >= 2 * min_len:
+                p1, p2 = coords[0], coords[-1]
+                v = p2 - p1
+                L = np.linalg.norm(v)
+                split_idx = len(coords) // 2
+                
+                if L > 1e-6:
+                    u = v / L
+                    best_k, best_dev = -1, -1.0
+                    for k in range(min_len, len(coords) - min_len):
+                        t = np.dot(coords[k] - p1, u)
+                        closest = p1 + np.clip(t, 0, L) * u
+                        dev = np.linalg.norm(coords[k] - closest)
+                        if dev > best_dev:
+                            best_dev, best_k = dev, k
+                    if best_k != -1:
+                        split_idx = best_k
+
+                if split_idx >= min_len and (len(coords) - split_idx) >= min_len:
+                    s1 = {'coords': coords[:split_idx], 'vector': self._get_strand_vector(coords[:split_idx])}
+                    s2 = {'coords': coords[split_idx:], 'vector': self._get_strand_vector(coords[split_idx:])}
+                    self.strands.pop(idx)
+                    self.strands.insert(idx, s2)
+                    self.strands.insert(idx, s1)
+                    self.audit['parity_method'] = f'GeoSplit_SmallN_{idx}'
+                    return
+            
+            self.audit['parity_method'] = 'KeepOdd_SmallN'
+            return
+
         scores = []
         for i, s in enumerate(self.strands):
             c = s['coords']
@@ -362,10 +575,11 @@ class BarrelGeometry:
         
         if not scores: return
         scores.sort(key=lambda x: x['linearity'])
-        candidate_split, candidate_drop = scores[0], sorted(scores, key=lambda x: x['len'])[0] 
+        cand_split = scores[0]
+        cand_drop = sorted(scores, key=lambda x: x['len'])[0] 
         
-        if candidate_split['linearity'] < 0.85 and candidate_split['len'] > 8:
-            idx = candidate_split['idx']
+        if cand_split['linearity'] < 0.85 and cand_split['len'] > 8:
+            idx = cand_split['idx']
             coords = self.strands[idx]['coords']
             mid = len(coords) // 2
             s1 = {'coords': coords[:mid], 'vector': self._get_strand_vector(coords[:mid])}
@@ -375,7 +589,7 @@ class BarrelGeometry:
             self.strands.insert(idx, s1)
             self.audit['parity_method'] = f'Split_Strand_{idx}'
         else:
-            idx = candidate_drop['idx']
+            idx = cand_drop['idx']
             self.strands.pop(idx)
             self.audit['parity_method'] = f'Drop_Strand_{idx}'
 
@@ -393,41 +607,25 @@ class BarrelGeometry:
         all_local = np.vstack([s['coords'] for s in self.strands])
         dists = np.linalg.norm(all_local[:, :2], axis=1)
         R = np.median(dists)
-        
         tilts = []
         for s in self.strands:
             vec = s['vector']
             cos_theta = abs(vec[2])
             angle = np.degrees(np.arccos(np.clip(cos_theta, -1, 1)))
             tilts.append(angle)
-        
         avg_tilt = np.clip(np.mean(tilts), 0, 85.0) if tilts else 0.0
-        
-        a = 4.4; b = 3.3
-        circum = 2 * np.pi * R
-        width = n * a
-        
-        delta_sq = circum**2 - width**2
-        tol_neg = -15.0
-        
-        if delta_sq > tol_neg:
-            S_calc = np.sqrt(max(0.0, delta_sq)) / b
-        else:
-            tilt_rad = np.radians(avg_tilt)
-            t_val = np.tan(tilt_rad)
-            t_val = min(t_val, 5.0) 
-            S_calc = (n * a / b) * t_val
-
-        S_int = int(np.floor(S_calc / 2 + 0.5)) * 2
+        a, b = 4.4, 3.3
+        delta_sq = (2*np.pi*R)**2 - (n*a)**2
+        if delta_sq > -15.0: S_calc = np.sqrt(max(0.0, delta_sq)) / b
+        else: S_calc = (n * a / b) * min(np.tan(np.radians(avg_tilt)), 5.0)
         z_coords = all_local[:, 2]
         height = np.max(z_coords) - np.min(z_coords) if len(z_coords) > 0 else 0.0
-
         self.params.update({
             "n_strands": n,
             "radius": round(R, 2),
             "tilt_angle": round(avg_tilt, 1),
             "shear_S_raw": round(S_calc, 2),
-            "shear_S": S_int,
+            "shear_S": int(np.floor(S_calc / 2 + 0.5)) * 2,
             "height": round(height, 1)
         })
 
