@@ -19,7 +19,7 @@ from beta_cooper.validator import BarrelValidator
 from beta_cooper.geometry import BarrelGeometry
 
 # --- 核心处理逻辑 (Worker) ---
-def analyze_structure(pdb_path, return_full_data=False):
+def analyze_structure(pdb_path, return_full_data=False, config_path=None):
     """
     通用分析函数。
     :param return_full_data: 如果为 True，返回包含调试数据的结果 (用于 Single Mode)
@@ -42,7 +42,7 @@ def analyze_structure(pdb_path, return_full_data=False):
     
     try:
         # 1. Validator
-        validator = BarrelValidator(pdb_path)
+        validator = BarrelValidator(pdb_path, config=config_path)
         v_res = validator.validate()
         
         result.update({
@@ -86,13 +86,13 @@ def analyze_structure(pdb_path, return_full_data=False):
     return result
 
 # --- 模式 1: 单文件调试 ---
-def run_single_mode(input_file):
+def run_single_mode(input_file, config_path=None):
     print(f"==================================================")
     print(f"   Beta-Cooper CLI: Single File Mode")
     print(f"   Target: {os.path.basename(input_file)}")
     print(f"==================================================\n")
 
-    res = analyze_structure(input_file, return_full_data=True)
+    res = analyze_structure(input_file, return_full_data=True, config_path=config_path)
     
     # 打印验证结果
     print(f"[Validator] Status:     {res['status']}")
@@ -123,7 +123,7 @@ def run_single_mode(input_file):
     print(f"Total Time: {res['processing_time']}s")
 
 # --- 模式 2: 批量处理 ---
-def run_batch_mode(input_dir, output_file, workers):
+def run_batch_mode(input_dir, output_file, workers, config_path=None):
     extensions = ['*.pdb', '*.cif', '*.ent', '*.mmcif']
     files = []
     for ext in extensions:
@@ -139,7 +139,7 @@ def run_batch_mode(input_dir, output_file, workers):
     results = []
     
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        future_to_file = {executor.submit(analyze_structure, f): f for f in files}
+        future_to_file = {executor.submit(analyze_structure, f, False, config_path): f for f in files}
         
         iterator = tqdm(as_completed(future_to_file), total=len(files), unit="pdb", desc="Processing")
         for i, future in enumerate(iterator):
@@ -186,6 +186,7 @@ def main():
     parser.add_argument("input", help="Path to a single PDB file OR a directory of PDBs")
     parser.add_argument("-o", "--output", default="barrel_census.csv", help="Output CSV path (Batch mode only)")
     parser.add_argument("-w", "--workers", type=int, default=os.cpu_count(), help="Number of CPU cores (Batch mode only)")
+    parser.add_argument("-c", "--config", default=None, help="Path to validator.yaml (optional). If omitted, auto-loads repo-root validator.yaml.")
     
     args = parser.parse_args()
     
@@ -197,10 +198,10 @@ def main():
 
     if os.path.isfile(input_path):
         # 自动进入单文件模式
-        run_single_mode(input_path)
+        run_single_mode(input_path, config_path=args.config)
     elif os.path.isdir(input_path):
         # 自动进入批量模式
-        run_batch_mode(input_path, args.output, args.workers)
+        run_batch_mode(input_path, args.output, args.workers, config_path=args.config)
     else:
         print("Error: Input is neither a file nor a directory.")
         sys.exit(1)
