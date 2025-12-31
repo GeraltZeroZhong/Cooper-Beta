@@ -1,11 +1,6 @@
-# Beta-Cooper Validator Configuration (single source of truth)
-#
-# 所有 validator 管线中的阈值/系数都集中在此文件。
-# 设计目标：方便在超大数据集上快速做阈值调参/消融。
-
 extractor:
   # DSSP execution
-  dssp_timeout_sec: 5
+  dssp_timeout_sec: 10
 
   # Segment construction (continuous DSSP 'E')
   jump_tolerance: 4
@@ -22,65 +17,24 @@ extractor:
     p90_min: 70.0
 
 analyzer:
-  # PCA degeneracy guard
-  min_axis_variance: 1.0e-5
-  axis_dominance_fallback_ratio: 1.15
-
-  # Robust core selection (MinCovDet)
-  mcd_support_fraction: 0.75
-  mcd_inlier_percentile: 80
-  min_core_atoms: 15
-
-  # Final validity threshold
-  score_threshold: 0.60
+  score_threshold: 0.60 
 
   penalties:
-    ellipticity:
-      thr: 1.8
-      mult: 0.6
 
-    stability:
-      cov_eigen_ratio_thr: 50.0
-      mult: 0.05
-      max_penalty: 0.30
+    ring_cv:     {thr_small: 0.25, thr_large: 0.30, mult_small: 1.5, mult_large: 1.2}
+    thickness:   {thr_small: 0.30, thr_large: 0.35, mult_small: 1.5, mult_large: 1.2}
+    surface_rmse_norm: {thr: 0.35, mult: 1.0}
 
-    ring_cv:
-      thr_small: 0.20
-      thr_large: 0.25
-      mult_small: 3.5
-      mult_large: 2.5
 
-    thickness:
-      thr_small: 0.25
-      thr_large: 0.30
-      mult_small: 3.0
-      mult_large: 2.5
+    z_profile:   {thr_cv: 0.40, penalty: 0.10}
+    segments:    {min_segments: 2, penalty: 0.10}
+    fallback:    {penalty: 0.05}
 
     kurtosis:
-      # only used when sample is not small
-      thick_thr: 0.35
-      kurtosis_thr: -1.0
-      penalty_if_thick: 0.5
-      penalty_else: 0.1
-
-    angular_gap:
-      thr_deg: 60.0
-      mult: 0.01   # (gap-thr)*mult  ; matches previous (gap-thr)/100
-
-    z_profile:
-      thr_cv: 0.30
-      penalty: 0.30
-
-    fallback:
-      penalty: 0.15
-
-    segments:
-      min_segments: 3
-      penalty: 0.25
-
-    surface_rmse_norm:
-      thr: 0.25
-      mult: 1.5
+      thick_thr: 0.40
+      kurtosis_thr: -1.5
+      penalty_if_thick: 0.20
+      penalty_else: 0.05
 
 # Topology / DSSP derived checks
 # (using strand ordering produced by geometry.cleaner+topology)
