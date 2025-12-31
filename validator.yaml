@@ -3,8 +3,8 @@ extractor:
   dssp_timeout_sec: 10
 
   # Segment construction (continuous DSSP 'E')
-  jump_tolerance: 4
-  min_segment_len: 3
+  jump_tolerance: 5
+  min_segment_len: 2
 
   # AlphaFold pLDDT inference from CA B-factor (0..100)
   # Only activates when B-factor distribution looks like pLDDT (predicted models),
@@ -16,33 +16,52 @@ extractor:
     median_min: 50.0
     p90_min: 70.0
 
+
 analyzer:
-  score_threshold: 0.60 
+
+  score_threshold: 0.6
 
   penalties:
+    # 放宽圆度要求 (Ring Coefficient of Variation)
+    # 允许更多椭圆或不规则形状通过
+    ring_cv:
+      thr_small: 0.4      # 原 0.25 -> 允许小样本更偏离圆形
+      thr_large: 1      # 原 0.30 -> 允许大样本更偏离圆形
+      mult_small: 0.5      # 原 1.5  -> 降低惩罚权重
+      mult_large: 0.4      # 原 1.2  -> 降低惩罚权重
 
-    ring_cv:     {thr_small: 0.25, thr_large: 0.30, mult_small: 1.5, mult_large: 1.2}
-    thickness:   {thr_small: 0.30, thr_large: 0.35, mult_small: 1.5, mult_large: 1.2}
-    surface_rmse_norm: {thr: 0.35, mult: 1.0}
+    # 放宽厚度/空心度要求 (Local Thickness)
+    # 允许桶壁更厚或内部填充更多的结构
+    thickness:
+      thr_small: 0.4      # 原 0.30
+      thr_large: 1      # 原 0.35
+      mult_small: 0.5      # 原 1.5
+      mult_large: 0.4     # 原 1.2
 
+    # 放宽曲面拟合误差 (Surface RMSE)
+    # 允许结构表面更粗糙
+    surface_rmse_norm:
+      thr: 0.45            # 原 0.35
+      mult: 0.25            # 原 1.0 -> 减半惩罚力度
 
-    z_profile:   {thr_cv: 0.40, penalty: 0.10}
-    segments:    {min_segments: 2, penalty: 0.10}
-    fallback:    {penalty: 0.05}
+    # 其他惩罚项微调
+    z_profile:   {thr_cv: 0.50, penalty: 0.05} # 放宽 Z 轴轮廓一致性
+    segments:    {min_segments: 2, penalty: 0.05}
+    fallback:    {penalty: 0.0} # 即使进入 Fallback 模式也不扣分
 
     kurtosis:
-      thick_thr: 0.40
+      thick_thr: 0.45
       kurtosis_thr: -1.5
-      penalty_if_thick: 0.20
-      penalty_else: 0.05
+      penalty_if_thick: 0.10 # 降低过厚时的惩罚
+      penalty_else: 0.0
 
 # Topology / DSSP derived checks
 # (using strand ordering produced by geometry.cleaner+topology)
 
 _topology_common:
   # Strong H-bond definition (DSSP energy cutoff, kcal/mol)
-  energy_cutoff: -0.5
-  min_hbonds_per_edge: 2
+  energy_cutoff: -0.4
+  min_hbonds_per_edge: 1
 
   # Mapping aligned strand coords back to residues via KDTree
   nn_dist_tol: 0.75
@@ -51,10 +70,9 @@ _topology_common:
   radial_min_rel_height: 0.15
 
 validator:
-  # Global confidence threshold applied after topology_quality scaling
+
   confidence_threshold: 0.60
 
-  # Optional combined topology quality scaling (0..1) applied to confidence
   topology_quality:
     enable: true
     apply_to_confidence: true
@@ -95,16 +113,16 @@ validator:
 
   # Hard-fail logic (conservative defaults)
   hard_fail:
-    cyclicity_required: 1.0
-    graph_connected_required: 1.0
-    degree2_fraction_min: 0.75
+    cyclicity_required: 0.5
+    graph_connected_required: 0.5
+    degree2_fraction_min: 0.5
 
-    vector_alt_max: -0.25     # fail if vector_alt_score > this
+    vector_alt_max: -0.2     # fail if vector_alt_score > this
 
     radial_unimodal_min: 0.50
     tilt_std_max_deg: 30.0
 
-    registry_std_max: 4.0
+    registry_std_max: 99.0
 
     hbond_uniformity:
       mean_min: 2.0
@@ -112,4 +130,3 @@ validator:
 
   # If still valid after hard checks, enforce the final confidence threshold
   enforce_confidence_threshold: true
-
