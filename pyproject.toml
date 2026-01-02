@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Cooper-Beta"
+version = "0.1.0"
+description = "Beta-barrel-like chain detector for PDB/mmCIF structures."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "UNLICENSED" }
+dependencies = [
+  "numpy>=1.23",
+  "scipy>=1.10",
+  "biopython>=1.81",
+]
+
+[project.optional-dependencies]
+full = [
+  "pandas>=1.5",
+  "tqdm>=4.0",
+  "matplotlib>=3.7",
+  "scikit-learn>=1.3",
+]
+dev = [
+  "pytest>=7.0",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+cooper-beta = "cooper_beta.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["cooper_beta*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
