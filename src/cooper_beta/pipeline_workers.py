@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 from collections import Counter
 from collections.abc import Iterable
@@ -7,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
+from .analysis_utils import collapse_points_by_strand
 from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
 from .config import AppConfig
@@ -34,6 +36,169 @@ except Exception:  # pragma: no cover
 
 def _format_below_threshold_reason(metric_name: str, observed: int, threshold: int) -> str:
     return f"{metric_name} below threshold ({observed} < {threshold})"
+
+
+def _axis_search_minimum_points(cfg: AppConfig) -> int:
+    return max(
+        int(cfg.analyzer.decision.min_intersections_for_scoring),
+        int(cfg.analyzer.fit.min_points_per_slice),
+    )
+
+
+def _axis_search_score_key(
+    slices: dict[float, list[tuple[float, ...]]],
+    minimum_points: int,
+) -> tuple[int, float, float, int]:
+    collapsed_counts: list[int] = []
+    duplicate_penalty = 0
+
+    for points in slices.values():
+        pts = np.asarray(points, dtype=float)
+        if pts.ndim != 2 or pts.shape[0] == 0:
+            continue
+
+        collapsed = collapse_points_by_strand(pts)
+        collapsed_count = int(collapsed.shape[0]) if collapsed.ndim == 2 else 0
+        collapsed_counts.append(collapsed_count)
+
+        if pts.shape[1] >= 4:
+            unique_strands = int(np.unique(pts[:, 3].astype(int)).size)
+        else:
+            unique_strands = int(pts.shape[0])
+        duplicate_penalty += int(pts.shape[0]) - unique_strands
+
+    if not collapsed_counts:
+        return (0, 0.0, 0.0, 0)
+
+    collapsed_array = np.asarray(collapsed_counts, dtype=float)
+    layers_at_threshold = int(np.sum(collapsed_array >= float(minimum_points)))
+    return (
+        layers_at_threshold,
+        float(np.median(collapsed_array)),
+        float(np.mean(collapsed_array)),
+        -int(duplicate_penalty),
+    )
+
+
+def _proper_rotation_matrix(rotation_matrix: np.ndarray) -> np.ndarray:
+    rotation = np.asarray(rotation_matrix, dtype=float)
+    if rotation.shape != (3, 3):
+        raise ValueError("Expected a 3x3 rotation matrix.")
+    if float(np.linalg.det(rotation)) < 0.0:
+        rotation = rotation.copy()
+        rotation[:, 0] *= -1.0
+    return rotation
+
+
+def _candidate_axis_rotations(rotation_matrix: np.ndarray) -> list[np.ndarray]:
+    base_rotation = np.asarray(rotation_matrix, dtype=float)
+    permutations = (
+        (0, 1, 2),  # largest PCA axis -> Z
+        (0, 2, 1),  # middle PCA axis -> Z
+        (1, 2, 0),  # smallest PCA axis -> Z
+    )
+    return [
+        _proper_rotation_matrix(base_rotation[:, permutation])
+        for permutation in permutations
+    ]
+
+
+def _local_axis_rotation(angle_deg: float, axis: str) -> np.ndarray:
+    theta = math.radians(float(angle_deg))
+    cosine = math.cos(theta)
+    sine = math.sin(theta)
+
+    if axis == "x":
+        return np.array(
+            [[1.0, 0.0, 0.0], [0.0, cosine, -sine], [0.0, sine, cosine]],
+            dtype=float,
+        )
+    if axis == "y":
+        return np.array(
+            [[cosine, 0.0, sine], [0.0, 1.0, 0.0], [-sine, 0.0, cosine]],
+            dtype=float,
+        )
+    raise ValueError(f"Unknown local rotation axis: {axis}")
+
+
+def _refinement_rotations(base_rotation: np.ndarray, angle_deg: float) -> list[np.ndarray]:
+    if angle_deg <= 0.0:
+        return [_proper_rotation_matrix(base_rotation)]
+
+    refined = [_proper_rotation_matrix(base_rotation)]
+    for axis in ("x", "y"):
+        for sign in (-1.0, 1.0):
+            refined.append(
+                _proper_rotation_matrix(
+                    np.asarray(base_rotation, dtype=float)
+                    @ _local_axis_rotation(sign * angle_deg, axis)
+                )
+            )
+    return refined
+
+
+def _aligned_coordinates_for_rotation(
+    coordinates: np.ndarray,
+    *,
+    center: np.ndarray,
+    rotation_matrix: np.ndarray,
+) -> np.ndarray:
+    return np.dot(np.asarray(coordinates, dtype=float) - np.asarray(center, dtype=float), rotation_matrix)
+
+
+def _select_alignment_slices(
+    aligner: PCAAligner,
+    coordinates: np.ndarray,
+    residues_data: list[dict[str, object]],
+    slicer: ProteinSlicer,
+    cfg: AppConfig,
+) -> dict[float, list[tuple[float, ...]]]:
+    axis_cfg = cfg.analyzer.axis_search
+    if not axis_cfg.enabled:
+        aligned_coordinates = aligner.transform(coordinates)
+        return slicer.slice_structure(aligned_coordinates, residues_data)
+
+    center = getattr(aligner, "center", None)
+    rotation_matrix = getattr(aligner, "rotation_matrix", None)
+    if center is None or rotation_matrix is None:
+        raise RuntimeError("Aligner is not fitted. Call fit() before selecting a PCA axis.")
+
+    minimum_points = _axis_search_minimum_points(cfg)
+
+    def best_slices_for_rotations(
+        rotations: Iterable[np.ndarray],
+    ) -> tuple[np.ndarray, dict[float, list[tuple[float, ...]]], tuple[int, float, float, int]]:
+        best_rotation: np.ndarray | None = None
+        best_slice_dict: dict[float, list[tuple[float, ...]]] | None = None
+        best_key: tuple[int, float, float, int] | None = None
+
+        for candidate_rotation in rotations:
+            aligned_coordinates = _aligned_coordinates_for_rotation(
+                coordinates,
+                center=np.asarray(center, dtype=float),
+                rotation_matrix=np.asarray(candidate_rotation, dtype=float),
+            )
+            slice_dict = slicer.slice_structure(aligned_coordinates, residues_data)
+            score_key = _axis_search_score_key(slice_dict, minimum_points)
+            if best_key is None or score_key > best_key:
+                best_rotation = np.asarray(candidate_rotation, dtype=float)
+                best_slice_dict = slice_dict
+                best_key = score_key
+
+        if best_rotation is None or best_slice_dict is None or best_key is None:
+            raise RuntimeError("Axis search produced no candidate rotations.")
+        return best_rotation, best_slice_dict, best_key
+
+    best_rotation, best_slices, _ = best_slices_for_rotations(
+        _candidate_axis_rotations(np.asarray(rotation_matrix, dtype=float))
+    )
+
+    if axis_cfg.refine.enabled and float(axis_cfg.refine.angle_deg) > 0.0:
+        _, best_slices, _ = best_slices_for_rotations(
+            _refinement_rotations(best_rotation, float(axis_cfg.refine.angle_deg))
+        )
+
+    return best_slices
 
 
 def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[str, object]:
@@ -142,19 +307,24 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
             result_stage="prefilter",
         )
     sheet_coordinates = np.array(sheet_residue_coords, dtype=float)
-
-    try:
-        aligner = PCAAligner()
-        aligner.fit(sheet_coordinates)
-        aligned_coordinates = aligner.transform(all_coordinates)
-    except Exception:
-        return build_row(RESULT_ERROR, "Alignment failed", result_stage="error")
-
     slicer = ProteinSlicer(
         step_size=cfg.slicer.step_size,
         fill_sheet_hole_length=cfg.slicer.fill_sheet_hole_length,
     )
-    slices = slicer.slice_structure(aligned_coordinates, residues_data)
+
+    try:
+        aligner = PCAAligner()
+        aligner.fit(sheet_coordinates)
+        slices = _select_alignment_slices(
+            aligner,
+            all_coordinates,
+            residues_data,
+            slicer,
+            cfg,
+        )
+    except Exception:
+        return build_row(RESULT_ERROR, "Alignment failed", result_stage="error")
+
     informative_slice_count = len(slices)
     if informative_slice_count < min_informative_slices:
         return build_row(

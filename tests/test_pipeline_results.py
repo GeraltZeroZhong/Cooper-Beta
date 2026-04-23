@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 import cooper_beta.pipeline_workers as pipeline_workers
@@ -23,6 +24,8 @@ def _install_analysis_stubs(
     class DummyAligner:
         def fit(self, coordinates):
             self.coordinates = coordinates
+            self.center = np.zeros(3, dtype=float)
+            self.rotation_matrix = np.eye(3, dtype=float)
 
         def transform(self, coordinates):
             return coordinates
@@ -203,3 +206,60 @@ def test_analyze_chain_payload_uses_raw_score_when_configured(monkeypatch: pytes
     assert row["decision_score"] == pytest.approx(0.80)
     assert row["score_adjust"] == pytest.approx(0.20)
     assert row["score_raw"] == pytest.approx(0.80)
+
+
+def test_select_alignment_slices_prefers_refined_best_axis(monkeypatch: pytest.MonkeyPatch):
+    class DummyAligner:
+        center = np.zeros(3, dtype=float)
+        rotation_matrix = np.eye(3, dtype=float)
+
+        def transform(self, coordinates):
+            return np.asarray(coordinates, dtype=float)
+
+    class DummySlicer:
+        def slice_structure(self, aligned_coordinates, residues_data):
+            label = int(round(float(np.max(np.asarray(aligned_coordinates, dtype=float)[:, 2]))))
+            return {0.0: [(float(label), 0.0, 0.5, 0.0)]}
+
+    monkeypatch.setattr(
+        pipeline_workers,
+        "_candidate_axis_rotations",
+        lambda rotation_matrix: [
+            np.diag([1.0, 1.0, 1.0]),
+            np.diag([1.0, 1.0, 2.0]),
+            np.diag([1.0, 1.0, 3.0]),
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline_workers,
+        "_refinement_rotations",
+        lambda base_rotation, angle_deg: [
+            base_rotation,
+            np.diag([1.0, 1.0, 9.0]),
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline_workers,
+        "_axis_search_score_key",
+        lambda slices, minimum_points: {
+            1: (1, 1.0, 1.0, 0),
+            2: (4, 4.0, 4.0, 0),
+            3: (2, 2.0, 2.0, 0),
+            9: (6, 6.0, 6.0, 0),
+        }[int(slices[0.0][0][0])],
+    )
+
+    cfg = AppConfig()
+    cfg.analyzer.axis_search.enabled = True
+    cfg.analyzer.axis_search.refine.enabled = True
+    cfg.analyzer.axis_search.refine.angle_deg = 5.0
+
+    slices = pipeline_workers._select_alignment_slices(
+        DummyAligner(),
+        np.array([[0.0, 0.0, 1.0]], dtype=float),
+        [_residue(0.0, 0.0, 0.0, is_sheet=True)],
+        DummySlicer(),
+        cfg,
+    )
+
+    assert slices[0.0][0][0] == pytest.approx(9.0)
