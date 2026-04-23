@@ -452,6 +452,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     if decision_cfg.use_adjusted_score:
         enough_scored_layers = (total_layers > 0) and (
             total_scored_layers > total_layers * float(decision_cfg.min_scored_layer_frac)
+            and total_scored_layers >= int(decision_cfg.min_scored_layers)
         )
 
     is_barrel = enough_scored_layers and (final_score >= decision_cfg.barrel_valid_ratio)
@@ -498,7 +499,8 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
         reason = (
             "Too few scored slices for a stable decision "
             f"({total_scored_layers}/{total_layers} = {scored_layer_frac:.2f}, "
-            f"need > {float(decision_cfg.min_scored_layer_frac):.2f})"
+            f"need > {float(decision_cfg.min_scored_layer_frac):.2f} "
+            f"and >= {int(decision_cfg.min_scored_layers)} layers)"
         )
     else:
         reason = main_reason
