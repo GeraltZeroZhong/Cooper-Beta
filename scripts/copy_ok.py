@@ -1,84 +1,118 @@
-from pathlib import Path
-import pandas as pd
+from __future__ import annotations
+
+import argparse
 import shutil
+from pathlib import Path
 
-# ====== Configuration you may want to change ======
-CSV_PATH = Path("cooper_beta_results.csv")  # Path to the source CSV
-SRC_DIR  = Path("data")                     # Source directory that contains the files
-DST_DIR  = Path("data-ok")                  # Destination directory
-
-RECURSIVE_SEARCH_IF_MISSING = True   # If direct path lookup fails, search by basename under SRC_DIR
-MOVE_INSTEAD_OF_COPY = False         # True = move; False = copy
-OVERWRITE = True                     # Whether to overwrite an existing destination file
-# ==========================
+import pandas as pd
 
 
-def find_in_src(src_dir: Path, rel_or_name: str, recursive: bool) -> Path | None:
-    p = Path(rel_or_name)
+def find_in_source(source_dir: Path, relative_or_name: str, recursive: bool) -> Path | None:
+    candidate = Path(relative_or_name)
 
-    # 1) Try the relative path or filename directly under src_dir.
-    direct = src_dir / p
-    if direct.exists():
-        return direct
+    direct_path = source_dir / candidate
+    if direct_path.exists():
+        return direct_path
 
-    # 2) If the CSV includes a path but the directory layout changed, try the basename.
-    direct2 = src_dir / p.name
-    if direct2.exists():
-        return direct2
+    basename_path = source_dir / candidate.name
+    if basename_path.exists():
+        return basename_path
 
-    # 3) Recursive basename search.
     if recursive:
-        hits = list(src_dir.rglob(p.name))
-        if hits:
-            return hits[0]  # If multiple matches exist, keep the first one.
+        matches = list(source_dir.rglob(candidate.name))
+        if matches:
+            return matches[0]
     return None
 
 
-def main():
-    df = pd.read_csv(CSV_PATH)
-    if "filename" not in df.columns:
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Copy or move files listed in a Cooper-Beta results CSV into a target folder."
+    )
+    parser.add_argument(
+        "--csv",
+        default="cooper_beta_results.csv",
+        help="Path to the source CSV.",
+    )
+    parser.add_argument(
+        "--src",
+        default="data",
+        help="Source directory containing structure files.",
+    )
+    parser.add_argument(
+        "--dst",
+        default="data-ok",
+        help="Destination directory.",
+    )
+    parser.add_argument(
+        "--no-recursive-search",
+        action="store_true",
+        help="Disable recursive basename search when direct lookup fails.",
+    )
+    parser.add_argument(
+        "--move",
+        action="store_true",
+        help="Move files instead of copying them.",
+    )
+    parser.add_argument(
+        "--no-overwrite",
+        action="store_true",
+        help="Keep existing destination files instead of overwriting them.",
+    )
+    args = parser.parse_args(argv)
+
+    csv_path = Path(args.csv)
+    source_dir = Path(args.src)
+    destination_dir = Path(args.dst)
+    recursive_search = not args.no_recursive_search
+    overwrite = not args.no_overwrite
+
+    dataframe = pd.read_csv(csv_path)
+    if "filename" not in dataframe.columns:
         raise ValueError('CSV is missing the required column: "filename"')
 
-    DST_DIR.mkdir(parents=True, exist_ok=True)
+    destination_dir.mkdir(parents=True, exist_ok=True)
 
     filenames = (
-        df["filename"]
+        dataframe["filename"]
         .dropna()
         .astype(str)
         .map(str.strip)
-        .loc[lambda s: s.ne("")]
+        .loc[lambda series: series.ne("")]
         .unique()
         .tolist()
     )
 
-    copied, skipped, missing = 0, 0, []
+    copied = 0
+    skipped = 0
+    missing: list[str] = []
 
-    for f in filenames:
-        src = find_in_src(SRC_DIR, f, RECURSIVE_SEARCH_IF_MISSING)
-        if src is None:
-            missing.append(f)
+    for filename in filenames:
+        source_path = find_in_source(source_dir, filename, recursive_search)
+        if source_path is None:
+            missing.append(filename)
             continue
 
-        dst = DST_DIR / src.name  # Save by basename in the destination directory.
-        if dst.exists() and not OVERWRITE:
+        destination_path = destination_dir / source_path.name
+        if destination_path.exists() and not overwrite:
             skipped += 1
             continue
 
-        if MOVE_INSTEAD_OF_COPY:
-            shutil.move(str(src), str(dst))
+        if args.move:
+            shutil.move(str(source_path), str(destination_path))
         else:
-            shutil.copy2(str(src), str(dst))
+            shutil.copy2(str(source_path), str(destination_path))
         copied += 1
 
-    print(f"Total unique filenames: {len(filenames)}")
-    print(f"Copied or moved       : {copied}")
+    print(f"Total unique filenames : {len(filenames)}")
+    print(f"Copied or moved        : {copied}")
     print(f"Skipped (kept existing): {skipped}")
-    print(f"Missing               : {len(missing)}")
+    print(f"Missing                : {len(missing)}")
 
     if missing:
-        miss_path = DST_DIR / "missing_files.txt"
-        miss_path.write_text("\n".join(missing), encoding="utf-8")
-        print(f"Missing-file list written to: {miss_path}")
+        missing_path = destination_dir / "missing_files.txt"
+        missing_path.write_text("\n".join(missing), encoding="utf-8")
+        print(f"Missing-file list written to: {missing_path}")
 
 
 if __name__ == "__main__":

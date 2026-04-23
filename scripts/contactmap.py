@@ -1,14 +1,40 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
 
-import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import numpy as np
 from Bio.PDB import MMCIFParser, PDBParser
+
+DEFAULT_CONTACT_CUTOFF = 8.0
+DEFAULT_MIN_SEQUENCE_SEPARATION = 3
+DEFAULT_CONTACT_MAP_DPI = 600
+DEFAULT_CONTACT_MAP_OUTPUT = "contact_map.png"
+DEFAULT_SINGLE_COLUMN_INCHES = 3.35
+DEFAULT_TICK_EVERY = 50
+PUBLICATION_RCPARAMS = {
+    "figure.facecolor": "white",
+    "axes.facecolor": "white",
+    "axes.edgecolor": "black",
+    "axes.linewidth": 0.8,
+    "font.size": 9,
+    "axes.labelsize": 9,
+    "axes.titlesize": 10,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "xtick.direction": "out",
+    "ytick.direction": "out",
+    "xtick.major.size": 3.0,
+    "ytick.major.size": 3.0,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
+    "savefig.bbox": "tight",
+    "savefig.pad_inches": 0.02,
+}
 
 
 @dataclass(frozen=True)
@@ -48,7 +74,7 @@ def load_chain_coords(
     chain_id: str = "A",
     model_id: int = 0,
     use_cb: bool = True,
-) -> Tuple[np.ndarray, List[ResidueID]]:
+) -> tuple[np.ndarray, list[ResidueID]]:
     """
     Load representative coordinates (Cβ or Cα) for a given chain.
 
@@ -74,8 +100,8 @@ def load_chain_coords(
 
     chain = model[chain_id]
 
-    coords: List[np.ndarray] = []
-    res_ids: List[ResidueID] = []
+    coords: list[np.ndarray] = []
+    res_ids: list[ResidueID] = []
 
     for res in chain:
         # skip hetero/water etc.
@@ -118,8 +144,8 @@ def distance_matrix(coords: np.ndarray) -> np.ndarray:
 
 def contact_map_from_dist(
     dist: np.ndarray,
-    cutoff: float = 8.0,
-    min_seq_sep: int = 3,
+    cutoff: float = DEFAULT_CONTACT_CUTOFF,
+    min_seq_sep: int = DEFAULT_MIN_SEQUENCE_SEPARATION,
     drop_diagonal: bool = True,
 ) -> np.ndarray:
     """
@@ -144,37 +170,19 @@ def contact_map_from_dist(
 
 
 def _set_pub_rcparams():
-    mpl.rcParams.update({
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-        "axes.edgecolor": "black",
-        "axes.linewidth": 0.8,
-        "font.size": 9,
-        "axes.labelsize": 9,
-        "axes.titlesize": 10,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
-        "xtick.direction": "out",
-        "ytick.direction": "out",
-        "xtick.major.size": 3.0,
-        "ytick.major.size": 3.0,
-        "xtick.major.width": 0.8,
-        "ytick.major.width": 0.8,
-        "savefig.bbox": "tight",
-        "savefig.pad_inches": 0.02,
-    })
+    mpl.rcParams.update(PUBLICATION_RCPARAMS)
 
 
 def plot_contact_map(
     cm: np.ndarray,
-    res_ids: Optional[Sequence[ResidueID]] = None,
-    title: Optional[str] = None,
-    out: str | os.PathLike = "contact_map.png",
-    dpi: int = 600,
+    res_ids: Sequence[ResidueID] | None = None,
+    title: str | None = None,
+    out: str | os.PathLike = DEFAULT_CONTACT_MAP_OUTPUT,
+    dpi: int = DEFAULT_CONTACT_MAP_DPI,
     also_save_pdf: bool = True,
-    single_column_inches: float = 3.35,  # ~85 mm
-    tick_every: int = 50,
-) -> Tuple[Path, Optional[Path]]:
+    single_column_inches: float = DEFAULT_SINGLE_COLUMN_INCHES,
+    tick_every: int = DEFAULT_TICK_EVERY,
+) -> tuple[Path, Path | None]:
     """
     Plot a publication-ready binary contact map.
 
@@ -249,10 +257,32 @@ def main():
     p.add_argument("--chain", default="A", help="Chain ID (default: A)")
     p.add_argument("--model", type=int, default=0, help="Model index (default: 0)")
     p.add_argument("--atom", choices=["cb", "ca"], default="cb", help="Representative atom (default: cb)")
-    p.add_argument("--cutoff", type=float, default=8.0, help="Distance cutoff in Å (default: 8.0)")
-    p.add_argument("--min-seq-sep", type=int, default=3, help="Minimum sequence separation (default: 3)")
-    p.add_argument("--dpi", type=int, default=600, help="Raster DPI (default: 600)")
-    p.add_argument("--out", default="contact_map.png", help="Output raster path (default: contact_map.png)")
+    p.add_argument(
+        "--cutoff",
+        type=float,
+        default=DEFAULT_CONTACT_CUTOFF,
+        help=f"Distance cutoff in Å (default: {DEFAULT_CONTACT_CUTOFF})",
+    )
+    p.add_argument(
+        "--min-seq-sep",
+        type=int,
+        default=DEFAULT_MIN_SEQUENCE_SEPARATION,
+        help=(
+            "Minimum sequence separation "
+            f"(default: {DEFAULT_MIN_SEQUENCE_SEPARATION})"
+        ),
+    )
+    p.add_argument(
+        "--dpi",
+        type=int,
+        default=DEFAULT_CONTACT_MAP_DPI,
+        help=f"Raster DPI (default: {DEFAULT_CONTACT_MAP_DPI})",
+    )
+    p.add_argument(
+        "--out",
+        default=DEFAULT_CONTACT_MAP_OUTPUT,
+        help=f"Output raster path (default: {DEFAULT_CONTACT_MAP_OUTPUT})",
+    )
     p.add_argument("--title", default=None, help="Figure title (optional)")
     p.add_argument("--no-pdf", action="store_true", help="Do not save PDF (vector)")
 

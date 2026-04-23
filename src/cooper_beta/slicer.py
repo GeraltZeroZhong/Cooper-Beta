@@ -1,13 +1,28 @@
-import numpy as np
 from collections import defaultdict
+
+import numpy as np
+
+from .constants import (
+    DEFAULT_FILL_SHEET_HOLE_LENGTH,
+    DEFAULT_SLICE_STEP_SIZE,
+    EPSILON,
+    SEQUENCE_INTERSECTION_OFFSET,
+    TOLERANCE,
+)
+
 
 class ProteinSlicer:
     """
     Slice along the Z axis and collect segment-plane intersections as ``(x, y)``.
     """
 
-    def __init__(self, step_size=1.0):
+    def __init__(
+        self,
+        step_size=DEFAULT_SLICE_STEP_SIZE,
+        fill_sheet_hole_length=DEFAULT_FILL_SHEET_HOLE_LENGTH,
+    ):
         self.step_size = float(step_size)
+        self.fill_sheet_hole_length = int(fill_sheet_hole_length)
 
     @staticmethod
     def _fill_short_holes(flags, max_hole_len=1):
@@ -60,7 +75,10 @@ class ProteinSlicer:
 
         # 1) Preprocess beta-sheet flags by filling one-residue holes.
         sheet_flags = [bool(r.get("is_sheet", False)) for r in residues_data]
-        sheet_flags = self._fill_short_holes(sheet_flags, max_hole_len=1)
+        sheet_flags = self._fill_short_holes(
+            sheet_flags,
+            max_hole_len=self.fill_sheet_hole_length,
+        )
 
         # 2) Determine the slice index range. Use integer k to avoid accumulating
         # floating-point error.
@@ -79,8 +97,6 @@ class ProteinSlicer:
             return {}
 
         slices = defaultdict(list)
-        eps = 1e-12
-
         # 3) Walk residue segments and compute intersections with each z-plane.
         for i in range(n - 1):
             # Keep the segment if either endpoint belongs to a beta-sheet region.
@@ -93,7 +109,7 @@ class ProteinSlicer:
             z1 = float(p1[2])
             z2 = float(p2[2])
             dz = z2 - z1
-            if abs(dz) < eps:
+            if abs(dz) < EPSILON:
                 continue
 
             seg_min_z = min(z1, z2)
@@ -108,12 +124,12 @@ class ProteinSlicer:
                 z_plane = k * step
                 t = (z_plane - z1) / dz
                 # Numerical tolerance: t should stay within [0, 1].
-                if t < -1e-9 or t > 1 + 1e-9:
+                if t < -TOLERANCE or t > 1 + TOLERANCE:
                     continue
                 x = float(p1[0] + t * (p2[0] - p1[0]))
                 y = float(p1[1] + t * (p2[1] - p1[1]))
                 # Sequence position for intersection from segment (i, i+1).
-                seq_pos = float(i) + 0.5
+                seq_pos = float(i) + SEQUENCE_INTERSECTION_OFFSET
                 slices[z_plane].append((x, y, seq_pos))
 
         return dict(sorted(slices.items()))

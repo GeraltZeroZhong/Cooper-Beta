@@ -1,105 +1,231 @@
-import os
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
+
+from hydra import compose, initialize_config_module
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf
+
+from .constants import (
+    DEFAULT_ALLOWED_SUFFIXES,
+    DEFAULT_FILL_SHEET_HOLE_LENGTH,
+    DEFAULT_INPUT_PATH,
+    DEFAULT_MIN_CHAIN_RESIDUES,
+    DEFAULT_MIN_INFORMATIVE_SLICES,
+    DEFAULT_MIN_SHEET_RESIDUES,
+    DEFAULT_OUTPUT_CSV,
+    DEFAULT_SLICE_STEP_SIZE,
+)
+
+
+@dataclass
+class RuntimeConfig:
+    workers: int | None = None
+    prepare_workers: int | None = None
+    cpu_reserve: int = 1
+    dssp_bin_path: str | None = None
+    fail_on_dssp_error: bool = True
+    check_env: bool = False
+
+
+@dataclass
+class InputConfig:
+    path: str = DEFAULT_INPUT_PATH
+    allowed_suffixes: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_SUFFIXES))
+    min_chain_residues: int = DEFAULT_MIN_CHAIN_RESIDUES
+    min_sheet_residues: int = DEFAULT_MIN_SHEET_RESIDUES
+    min_informative_slices: int = DEFAULT_MIN_INFORMATIVE_SLICES
+
+
+@dataclass
+class OutputConfig:
+    csv_path: str = DEFAULT_OUTPUT_CSV
+
+
+@dataclass
+class SlicerConfig:
+    step_size: float = DEFAULT_SLICE_STEP_SIZE
+    fill_sheet_hole_length: int = DEFAULT_FILL_SHEET_HOLE_LENGTH
+
+
+@dataclass
+class LeastSquaresConfig:
+    method: str = "trf"
+    loss: str = "soft_l1"
+    f_scale: float = 1.0
+
+
+@dataclass
+class EllipseFitConfig:
+    min_points_per_slice: int = 7
+    max_rmse: float = 3.0
+    min_axis: float = 3.0
+    max_axis: float = 199.0
+    max_flattening: float = 3.5
+    least_squares: LeastSquaresConfig = field(default_factory=LeastSquaresConfig)
+
+
+@dataclass
+class DecisionConfig:
+    barrel_valid_ratio: float = 0.5
+    use_adjusted_score: bool = True
+    min_intersections_for_scoring: int = 7
+    min_scored_layer_frac: float = 0.20
+
+
+@dataclass
+class NearestNeighborRuleConfig:
+    enabled: bool = True
+    max_robust_cv: float = 0.40
+    min_inlier_frac: float = 0.75
+    fail_as_junk: bool = True
+
+
+@dataclass
+class AngleOrderRuleConfig:
+    enabled: bool = True
+    local_step_max: int = 1
+    min_local_frac: float = 1.0
+    max_mean_circ_dist_norm: float = 0.0
+
+
+@dataclass
+class AngleRuleConfig:
+    enabled: bool = True
+    max_gap_deg: float = 80.0
+    fail_as_junk: bool = False
+    order: AngleOrderRuleConfig = field(default_factory=AngleOrderRuleConfig)
+
+
+@dataclass
+class AnalyzerRulesConfig:
+    nearest_neighbor: NearestNeighborRuleConfig = field(default_factory=NearestNeighborRuleConfig)
+    angle: AngleRuleConfig = field(default_factory=AngleRuleConfig)
+
+
+@dataclass
+class AnalyzerConfig:
+    fit: EllipseFitConfig = field(default_factory=EllipseFitConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
+    rules: AnalyzerRulesConfig = field(default_factory=AnalyzerRulesConfig)
+
+
+@dataclass
+class AppConfig:
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
+    input: InputConfig = field(default_factory=InputConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
+    slicer: SlicerConfig = field(default_factory=SlicerConfig)
+    analyzer: AnalyzerConfig = field(default_factory=AnalyzerConfig)
+
+
+LEGACY_OVERRIDE_PATHS = {
+    "DSSP_BIN_PATH": "runtime.dssp_bin_path",
+    "SLICE_STEP_SIZE": "slicer.step_size",
+    "MIN_POINTS_PER_SLICE": "analyzer.fit.min_points_per_slice",
+    "MAX_FIT_RMSE": "analyzer.fit.max_rmse",
+    "MIN_AXIS": "analyzer.fit.min_axis",
+    "MAX_AXIS": "analyzer.fit.max_axis",
+    "MAX_FLATTENING": "analyzer.fit.max_flattening",
+    "LSQ_METHOD": "analyzer.fit.least_squares.method",
+    "LSQ_LOSS": "analyzer.fit.least_squares.loss",
+    "LSQ_F_SCALE": "analyzer.fit.least_squares.f_scale",
+    "BARREL_VALID_RATIO": "analyzer.decision.barrel_valid_ratio",
+    "MIN_INTERSECTIONS_FOR_SCORING": "analyzer.decision.min_intersections_for_scoring",
+    "USE_ADJUSTED_SCORE": "analyzer.decision.use_adjusted_score",
+    "MIN_SCORED_LAYER_FRAC": "analyzer.decision.min_scored_layer_frac",
+    "NN_RULE_ENABLED": "analyzer.rules.nearest_neighbor.enabled",
+    "NN_MAX_ROBUST_CV": "analyzer.rules.nearest_neighbor.max_robust_cv",
+    "NN_MIN_INLIER_FRAC": "analyzer.rules.nearest_neighbor.min_inlier_frac",
+    "NN_FAIL_AS_JUNK": "analyzer.rules.nearest_neighbor.fail_as_junk",
+    "ANGLE_RULE_ENABLED": "analyzer.rules.angle.enabled",
+    "ANGLE_MAX_GAP_DEG": "analyzer.rules.angle.max_gap_deg",
+    "ANGLE_ORDER_RULE_ENABLED": "analyzer.rules.angle.order.enabled",
+    "ANGLE_ORDER_LOCAL_STEP_MAX": "analyzer.rules.angle.order.local_step_max",
+    "ANGLE_ORDER_MIN_LOCAL_FRAC": "analyzer.rules.angle.order.min_local_frac",
+    "ANGLE_ORDER_MAX_MEAN_CIRC_DIST_NORM": "analyzer.rules.angle.order.max_mean_circ_dist_norm",
+    "ANGLE_FAIL_AS_JUNK": "analyzer.rules.angle.fail_as_junk",
+    "MIN_CHAIN_RESIDUES": "input.min_chain_residues",
+    "MIN_SHEET_RESIDUES": "input.min_sheet_residues",
+    "MIN_INFORMATIVE_SLICES": "input.min_informative_slices",
+}
+
 
 class Config:
-    # --- Loader ---
-    # DSSP executable path. Set this to an absolute path if automatic discovery
-    # fails, for example:
-    # "/usr/bin/mkdssp" or "/home/user/miniconda3/bin/mkdssp"
-    DSSP_BIN_PATH = None
+    """Legacy flat configuration shim kept for backward compatibility."""
 
-    # --- Slicer ---
-    # Slice thickness in angstroms.
-    SLICE_STEP_SIZE = 1.0
 
-    # --- Analyzer (Elliptical Fitting) ---
-    # A general ellipse fit (5 parameters) needs at least 5 points. We use a
-    # slightly larger default for stability.
-    MIN_POINTS_PER_SLICE = 7
+def _register_schema() -> None:
+    cs = ConfigStore.instance()
+    if getattr(_register_schema, "_done", False):
+        return
+    cs.store(name="cooper_beta_schema", node=AppConfig)
+    _register_schema._done = True
 
-    # Maximum allowed fit error (RMSE, angstroms).
-    MAX_FIT_RMSE = 3
 
-    # Allowed ellipse semi-axis range (angstroms).
-    MIN_AXIS = 3.0
-    MAX_AXIS = 199.0
+def _to_override_value(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        inner = ", ".join(_to_override_value(v) for v in value)
+        return f"[{inner}]"
+    return str(value)
 
-    # Maximum flattening ratio (major_axis / minor_axis). Very large values mean
-    # the slice looks overly compressed and is unlikely to be a barrel.
-    MAX_FLATTENING = 3.5
 
-    # --- Robust fitting (least_squares) ---
-    LSQ_METHOD = 'trf'         # 'trf' supports robust losses.
-    LSQ_LOSS = 'soft_l1'       # You can switch this to 'huber' if needed.
-    LSQ_F_SCALE = 1.0          # Scale parameter for the robust loss.
+def normalize_overrides(overrides: Mapping[str, Any] | list[str] | None = None) -> list[str]:
+    if overrides is None:
+        return []
+    if isinstance(overrides, list):
+        return list(overrides)
 
-    # --- Decision ---
-    # Final decision threshold: classify as BARREL when the valid-slice ratio
-    # exceeds BARREL_VALID_RATIO.
-    BARREL_VALID_RATIO = 0.5
+    normalized: list[str] = []
+    for key, value in overrides.items():
+        target_key = LEGACY_OVERRIDE_PATHS.get(key, key)
+        normalized.append(f"{target_key}={_to_override_value(value)}")
+    return normalized
 
-    # --- Scoring adjustment ---
-    # Minimum number of intersections required for a slice to contribute to the
-    # score_adjust denominator. Slices with too few points are treated as junk.
-    MIN_INTERSECTIONS_FOR_SCORING = 7
 
-    # Whether to use score_adjust as the final decision score.
-    USE_ADJUSTED_SCORE = True
+def compose_config(
+    overrides: Mapping[str, Any] | list[str] | None = None,
+    *,
+    config_name: str = "config",
+) -> DictConfig:
+    _register_schema()
+    with initialize_config_module(config_module="cooper_beta.conf", version_base=None):
+        file_cfg = compose(config_name=config_name, overrides=normalize_overrides(overrides))
+    structured_cfg = OmegaConf.structured(AppConfig)
+    return OmegaConf.merge(structured_cfg, file_cfg)
 
-    # --- Control condition ---
-    # Require enough scored slices; otherwise score_adjust becomes unstable.
-    # Condition: all_adjusted_layers > all_layers * MIN_SCORED_LAYER_FRAC
-    MIN_SCORED_LAYER_FRAC = 0.20
 
-    # --- Nearest-neighbor spacing rule (optional) ---
-    # Uniformity check based on geometric nearest-neighbor distances. Useful for
-    # flagging noisy, sparse, or duplicated intersections.
-    NN_RULE_ENABLED = True
+def build_config(
+    overrides: Mapping[str, Any] | list[str] | None = None,
+    *,
+    config_name: str = "config",
+) -> AppConfig:
+    cfg = compose_config(overrides, config_name=config_name)
+    app_cfg = OmegaConf.to_object(cfg)
+    if not isinstance(app_cfg, AppConfig):
+        raise TypeError("Hydra returned an unexpected configuration object.")
+    sync_legacy_config(app_cfg)
+    return app_cfg
 
-    # Dispersion threshold for nearest-neighbor distances, using robust CV =
-    # (1.4826 * MAD) / median. Smaller is stricter, larger is more permissive.
-    NN_MAX_ROBUST_CV = 0.40
 
-    # Minimum inlier fraction, where inliers satisfy
-    # |d - median| <= 3 * robust_sigma.
-    NN_MIN_INLIER_FRAC = 0.75
+def sync_legacy_config(cfg: AppConfig) -> None:
+    for legacy_name, path in LEGACY_OVERRIDE_PATHS.items():
+        value = cfg
+        for part in path.split("."):
+            value = getattr(value, part)
+        setattr(Config, legacy_name, value)
 
-    # Whether a slice that fails the NN rule should be excluded from scoring as
-    # junk. True tends to favor recall; False tends to favor precision.
-    NN_FAIL_AS_JUNK = True
 
-    # --- Angular coverage / gap rule (for jelly-roll rejection) ---
-    # Beta-barrel cross sections should cover nearly 360 degrees. Jelly-roll
-    # structures often leave large angular gaps.
-    ANGLE_RULE_ENABLED = True
+def default_config() -> AppConfig:
+    return build_config()
 
-    # Maximum allowed angular gap, in degrees. Smaller values are stricter.
-    ANGLE_MAX_GAP_DEG = 80
 
-    # --- Sequence-order vs angle-order consistency rule ---
-    # For each slice, every intersection has both:
-    #   - seq_order: the order induced by segment positions i + 0.5
-    #   - angle_order: the order induced by polar angle around the slice center
-    # True beta barrels usually advance locally around the circumference as
-    # sequence order advances. Jelly-roll / beta-sandwich structures often jump
-    # across the opposite side of the slice.
-    #
-    # local_step: circular distance between adjacent seq_order neighbors in
-    # angle_order rank space.
-    # local_frac: fraction of local_step values that are within the threshold.
-    ANGLE_ORDER_RULE_ENABLED = True
-
-    # Maximum local step that still counts as "locally adjacent" in angle_order.
-    ANGLE_ORDER_LOCAL_STEP_MAX = 1
-
-    # Pass condition: local_frac must be at least this threshold.
-    ANGLE_ORDER_MIN_LOCAL_FRAC = 1
-
-    # Additional global consistency score, normalized to [0, 1], while allowing
-    # circular shifts and reversed direction.
-    # 0 means a perfect match to some shift/direction; 1 means maximally inconsistent.
-    ANGLE_ORDER_MAX_MEAN_CIRC_DIST_NORM = 0
-
-    # Whether slices that fail the angle rule should be excluded from scoring as
-    # junk. Default False keeps them in the denominator and lowers the score,
-    # which helps reject jelly-roll-like structures.
-    ANGLE_FAIL_AS_JUNK = False
+sync_legacy_config(AppConfig())

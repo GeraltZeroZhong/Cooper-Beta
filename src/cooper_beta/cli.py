@@ -1,66 +1,82 @@
 from __future__ import annotations
 
-import os as _os
-
-# Avoid over-subscription when using multiprocessing + BLAS
-_os.environ.setdefault("OMP_NUM_THREADS", "1")
-_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-_os.environ.setdefault("MKL_NUM_THREADS", "1")
-_os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
-_os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
-
 import argparse
 
-from .pipeline import main as _run
+from .bootstrap import configure_thread_environment
+from .config import build_config
+from .pipeline import apply_runtime_overrides, run_pipeline
 from .runtime import runtime_summary
+
+configure_thread_environment()
+
+
+def _looks_like_hydra_override(token: str) -> bool:
+    return token.startswith(("+", "~")) or ("=" in token)
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="cooper-beta",
-        description="Detect beta-barrel-like protein chains from PDB/mmCIF inputs and write a CSV summary.",
+        description=(
+            "Detect beta-barrel-like protein chains from PDB/mmCIF inputs and write a CSV "
+            "summary. Extra unknown arguments are forwarded as Hydra overrides."
+        ),
     )
-    ap.add_argument(
+    parser.add_argument(
         "path",
         nargs="?",
-        default="data/",
-        help="Input path: a single structure file, or a directory containing .pdb/.cif/.mmcif files (default: data/).",
+        default=None,
+        help=(
+            "Input path: a single structure file, or a directory containing structure files. "
+            "When omitted, Hydra config `input.path` is used."
+        ),
     )
-    ap.add_argument(
+    parser.add_argument(
         "--workers",
         "-w",
         type=int,
         default=None,
-        help="Number of analysis workers (default: CPU count minus one, with a minimum of one).",
+        help="Legacy shortcut for `runtime.workers`.",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--prepare-workers",
         "--prep",
         type=int,
         default=None,
-        help="Number of preparation workers for DSSP/parsing (default: same as --workers).",
+        help="Legacy shortcut for `runtime.prepare_workers`.",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--out",
         "-o",
-        default="cooper_beta_results.csv",
-        help="Output CSV path (default: cooper_beta_results.csv).",
+        default=None,
+        help="Legacy shortcut for `output.csv_path`.",
     )
-    ap.add_argument(
+    parser.add_argument(
         "--check-env",
         action="store_true",
         help="Check whether Python and DSSP are available, then exit.",
     )
-    args = ap.parse_args(argv)
+    args, hydra_overrides = parser.parse_known_args(argv)
+    if args.path and _looks_like_hydra_override(args.path):
+        hydra_overrides = [args.path, *hydra_overrides]
+        args.path = None
 
-    if args.check_env:
-        summary = runtime_summary()
+    cfg = build_config(hydra_overrides)
+    cfg = apply_runtime_overrides(
+        cfg,
+        input_path=args.path,
+        workers=args.workers,
+        prepare_workers=args.prepare_workers,
+        out_csv=args.out,
+    )
+
+    if args.check_env or cfg.runtime.check_env:
+        summary = runtime_summary(cfg.runtime.dssp_bin_path)
         print(f"Python: {summary['python']}")
         print(f"DSSP: {summary['dssp']}")
         return
 
-    prep = args.prepare_workers if args.prepare_workers is not None else args.workers
-    _run(args.path, workers=args.workers, prepare_workers=prep, out_csv=args.out)
+    run_pipeline(cfg)
 
 
 if __name__ == "__main__":  # pragma: no cover
