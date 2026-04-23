@@ -3,5 +3,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+data/
 data-test/
 eval_outputs/
