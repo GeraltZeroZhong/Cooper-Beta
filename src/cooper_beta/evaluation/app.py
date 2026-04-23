@@ -215,3 +215,7 @@ def main(argv: list[str] | None = None) -> None:
     if display_columns:
         print(dataframe[display_columns].to_string(index=False))
     print(f"\nSaved: {output_path}\n")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
