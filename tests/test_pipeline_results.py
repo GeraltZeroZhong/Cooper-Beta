@@ -241,7 +241,7 @@ def test_select_alignment_slices_prefers_refined_best_axis(monkeypatch: pytest.M
     monkeypatch.setattr(
         pipeline_workers,
         "_axis_search_score_key",
-        lambda slices, minimum_points: {
+        lambda slices, minimum_points, cfg: {
             1: (1, 1.0, 1.0, 0),
             2: (4, 4.0, 4.0, 0),
             3: (2, 2.0, 2.0, 0),
@@ -253,6 +253,89 @@ def test_select_alignment_slices_prefers_refined_best_axis(monkeypatch: pytest.M
     cfg.analyzer.axis_search.enabled = True
     cfg.analyzer.axis_search.refine.enabled = True
     cfg.analyzer.axis_search.refine.angle_deg = 5.0
+
+    slices = pipeline_workers._select_alignment_slices(
+        DummyAligner(),
+        np.array([[0.0, 0.0, 1.0]], dtype=float),
+        [_residue(0.0, 0.0, 0.0, is_sheet=True)],
+        DummySlicer(),
+        cfg,
+    )
+
+    assert slices[0.0][0][0] == pytest.approx(9.0)
+
+
+def test_select_alignment_slices_prefers_geometry_over_dense_bad_axis(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class DummyAligner:
+        center = np.zeros(3, dtype=float)
+        rotation_matrix = np.eye(3, dtype=float)
+
+        def transform(self, coordinates):
+            return np.asarray(coordinates, dtype=float)
+
+    class DummySlicer:
+        def slice_structure(self, aligned_coordinates, residues_data):
+            label = int(round(float(np.max(np.asarray(aligned_coordinates, dtype=float)[:, 2]))))
+            point_count = {1: 8, 2: 12, 9: 10}[label]
+            return {
+                0.0: [
+                    (float(label), float(index), float(index) + 0.5, float(index))
+                    for index in range(point_count)
+                ]
+            }
+
+    monkeypatch.setattr(
+        pipeline_workers,
+        "_candidate_axis_rotations",
+        lambda rotation_matrix: [
+            np.diag([1.0, 1.0, 1.0]),
+            np.diag([1.0, 1.0, 2.0]),
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline_workers,
+        "_refinement_rotations",
+        lambda base_rotation, angle_deg: [
+            base_rotation,
+            np.diag([1.0, 1.0, 9.0]),
+        ],
+    )
+    monkeypatch.setattr(
+        pipeline_workers,
+        "nearest_neighbor_spacing_stats",
+        lambda points_xy: (1.0, 0.0, 0.0, 1.0),
+    )
+    monkeypatch.setattr(
+        pipeline_workers,
+        "angular_gap_stats",
+        lambda points_xy: (
+            {1: 100.0, 2: 160.0, 9: 100.0}[int(round(float(points_xy[0, 0])))],
+            0.0,
+            int(points_xy.shape[0]),
+            0.0,
+            0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline_workers,
+        "sequence_angle_order_stats",
+        lambda points, order_cfg: {
+            "order_local_frac": {1: 1.0, 2: 0.5, 9: 1.0}[int(round(float(points[0, 0])))],
+            "order_mean_circ_dist_norm": {1: 0.0, 2: 0.3, 9: 0.0}[int(round(float(points[0, 0])))],
+        },
+    )
+
+    cfg = AppConfig()
+    cfg.analyzer.axis_search.enabled = True
+    cfg.analyzer.axis_search.refine.enabled = True
+    cfg.analyzer.axis_search.refine.angle_deg = 5.0
+    cfg.analyzer.fit.min_points_per_slice = 7
+    cfg.analyzer.decision.min_intersections_for_scoring = 7
+    cfg.analyzer.rules.angle.max_gap_deg = 120.0
+    cfg.analyzer.rules.angle.order.min_local_frac = 1.0
+    cfg.analyzer.rules.angle.order.max_mean_circ_dist_norm = 0.0
 
     slices = pipeline_workers._select_alignment_slices(
         DummyAligner(),

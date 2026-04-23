@@ -8,7 +8,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
-from .analysis_utils import collapse_points_by_strand
+from .analysis_utils import (
+    angular_gap_stats,
+    collapse_points_by_strand,
+    nearest_neighbor_spacing_stats,
+    sequence_angle_order_stats,
+)
 from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
 from .config import AppConfig
@@ -48,8 +53,19 @@ def _axis_search_minimum_points(cfg: AppConfig) -> int:
 def _axis_search_score_key(
     slices: dict[float, list[tuple[float, ...]]],
     minimum_points: int,
-) -> tuple[int, float, float, int]:
+    cfg: AppConfig,
+) -> tuple[int | float, ...]:
+    """Rank candidate axis rotations using lightweight geometric rule proxies."""
+    rules_cfg = cfg.analyzer.rules
     collapsed_counts: list[int] = []
+    full_pass_layers = 0
+    gap_pass_layers = 0
+    order_pass_layers = 0
+    nn_pass_layers = 0
+    gap_margins: list[float] = []
+    order_local_fracs: list[float] = []
+    order_mean_circ_dists: list[float] = []
+    nn_inlier_fracs: list[float] = []
     duplicate_penalty = 0
 
     for points in slices.values():
@@ -67,12 +83,81 @@ def _axis_search_score_key(
             unique_strands = int(pts.shape[0])
         duplicate_penalty += int(pts.shape[0]) - unique_strands
 
+        if collapsed_count < minimum_points:
+            continue
+
+        collapsed_points = np.asarray(collapsed, dtype=float)
+        collapsed_xy = np.asarray(collapsed_points[:, :2], dtype=float)
+
+        nn_ok = True
+        nn_inlier_frac = 1.0
+        if rules_cfg.nearest_neighbor.enabled:
+            nn_stats = nearest_neighbor_spacing_stats(collapsed_xy)
+            if nn_stats is not None:
+                _, _, robust_cv, inlier_frac = nn_stats
+                nn_inlier_frac = float(inlier_frac)
+                nn_ok = (
+                    float(robust_cv) <= float(rules_cfg.nearest_neighbor.max_robust_cv)
+                    and nn_inlier_frac >= float(rules_cfg.nearest_neighbor.min_inlier_frac)
+                )
+        nn_inlier_fracs.append(nn_inlier_frac)
+        if nn_ok:
+            nn_pass_layers += 1
+
+        gap_ok = True
+        gap_margin = 0.0
+        order_ok = True
+        order_local_frac = 1.0
+        order_mean_circ = 0.0
+        if rules_cfg.angle.enabled:
+            angle_stats = angular_gap_stats(collapsed_xy)
+            if angle_stats is not None:
+                max_gap_deg = float(angle_stats[0])
+                gap_margin = float(rules_cfg.angle.max_gap_deg) - max_gap_deg
+                gap_ok = max_gap_deg <= float(rules_cfg.angle.max_gap_deg)
+
+            if rules_cfg.angle.order.enabled:
+                order_stats = sequence_angle_order_stats(collapsed_points, rules_cfg.angle.order)
+                if order_stats is not None:
+                    order_local_frac = float(order_stats["order_local_frac"])
+                    order_mean_circ = float(order_stats["order_mean_circ_dist_norm"])
+                    order_ok = (
+                        order_local_frac >= float(rules_cfg.angle.order.min_local_frac)
+                        and order_mean_circ
+                        <= float(rules_cfg.angle.order.max_mean_circ_dist_norm)
+                    )
+
+        gap_margins.append(gap_margin)
+        order_local_fracs.append(order_local_frac)
+        order_mean_circ_dists.append(order_mean_circ)
+
+        if gap_ok:
+            gap_pass_layers += 1
+        if order_ok:
+            order_pass_layers += 1
+        if nn_ok and gap_ok and order_ok:
+            full_pass_layers += 1
+
     if not collapsed_counts:
-        return (0, 0.0, 0.0, 0)
+        return (0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, 0.0, 0)
 
     collapsed_array = np.asarray(collapsed_counts, dtype=float)
     layers_at_threshold = int(np.sum(collapsed_array >= float(minimum_points)))
+    median_gap_margin = float(np.median(gap_margins)) if gap_margins else 0.0
+    median_order_local = float(np.median(order_local_fracs)) if order_local_fracs else 0.0
+    median_order_mean_circ = (
+        float(np.median(order_mean_circ_dists)) if order_mean_circ_dists else 0.0
+    )
+    median_nn_inlier = float(np.median(nn_inlier_fracs)) if nn_inlier_fracs else 0.0
     return (
+        full_pass_layers,
+        gap_pass_layers,
+        order_pass_layers,
+        nn_pass_layers,
+        median_gap_margin,
+        median_order_local,
+        -median_order_mean_circ,
+        median_nn_inlier,
         layers_at_threshold,
         float(np.median(collapsed_array)),
         float(np.mean(collapsed_array)),
@@ -167,10 +252,10 @@ def _select_alignment_slices(
 
     def best_slices_for_rotations(
         rotations: Iterable[np.ndarray],
-    ) -> tuple[np.ndarray, dict[float, list[tuple[float, ...]]], tuple[int, float, float, int]]:
+    ) -> tuple[np.ndarray, dict[float, list[tuple[float, ...]]], tuple[int | float, ...]]:
         best_rotation: np.ndarray | None = None
         best_slice_dict: dict[float, list[tuple[float, ...]]] | None = None
-        best_key: tuple[int, float, float, int] | None = None
+        best_key: tuple[int | float, ...] | None = None
 
         for candidate_rotation in rotations:
             aligned_coordinates = _aligned_coordinates_for_rotation(
@@ -179,7 +264,11 @@ def _select_alignment_slices(
                 rotation_matrix=np.asarray(candidate_rotation, dtype=float),
             )
             slice_dict = slicer.slice_structure(aligned_coordinates, residues_data)
-            score_key = _axis_search_score_key(slice_dict, minimum_points)
+            score_key = _axis_search_score_key(
+                slice_dict,
+                minimum_points,
+                cfg,
+            )
             if best_key is None or score_key > best_key:
                 best_rotation = np.asarray(candidate_rotation, dtype=float)
                 best_slice_dict = slice_dict
