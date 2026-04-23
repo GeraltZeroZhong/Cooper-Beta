@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Legacy entry point kept for backward compatibility.
 
@@ -14,22 +13,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import os as _os
-# Avoid over-subscription when using multiprocessing + BLAS
-_os.environ.setdefault("OMP_NUM_THREADS", "1")
-_os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
-_os.environ.setdefault("MKL_NUM_THREADS", "1")
-_os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
-_os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
-
-
 # Ensure src/ is importable when running from the repository root
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from cooper_beta.bootstrap import configure_thread_environment  # noqa: E402
 from cooper_beta.pipeline import main  # noqa: E402
+
+configure_thread_environment()
 
 
 def _legacy_cli(argv: list[str]) -> None:

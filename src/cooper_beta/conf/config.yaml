@@ -1,0 +1,11 @@
+defaults:
+  - runtime: default
+  - input: default
+  - output: default
+  - slicer: default
+  - analyzer: default
+  - _self_
+
+hydra:
+  job:
+    chdir: false

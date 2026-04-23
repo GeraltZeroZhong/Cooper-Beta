@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class PCAAligner:
     """
     Use PCA to align the principal axis of a point cloud to the Z axis.
@@ -72,25 +73,3 @@ class PCAAligner:
         """Convenience wrapper that runs ``fit`` followed by ``transform``."""
         self.fit(points)
         return self.transform(points)
-
-# --- Simple self-check ---
-if __name__ == "__main__":
-    # Create an elongated cylinder-like point cloud to mimic a beta barrel.
-    t = np.linspace(0, 20, 100)
-    x = np.cos(t) + np.random.normal(0, 0.1, 100)
-    y = np.sin(t) + np.random.normal(0, 0.1, 100)
-    z = t * 2
-
-    original_points = np.column_stack([x, y, z])
-
-    aligner = PCAAligner()
-    transformed_points = aligner.fit_transform(original_points)
-
-    print("Original Z-axis variance:", np.var(original_points[:, 2]))
-    print("Transformed Z-axis variance:", np.var(transformed_points[:, 2]))
-    print("Transformed X-axis variance:", np.var(transformed_points[:, 0]))
-
-    if np.var(transformed_points[:, 2]) > np.var(transformed_points[:, 0]):
-        print("Alignment test passed: the principal axis is aligned to Z.")
-    else:
-        print("Alignment test failed: Z is not the axis with the largest variance.")

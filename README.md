@@ -24,7 +24,7 @@ whether each chain is classified as a beta-barrel.
 `pip` can install Python packages, but it cannot install system binaries such as
 DSSP for you. Cooper-Beta now checks for DSSP before analysis starts. If the
 binary is missing, the program fails fast with a clear message telling you to
-install DSSP first or set `src/cooper_beta/config.py -> Config.DSSP_BIN_PATH`.
+install DSSP first or set `runtime.dssp_bin_path=/absolute/path/to/mkdssp`.
 
 ### Recommended: one-command setup
 This repository ships with `environment.yml` and `scripts/setup_env.sh`. This is
@@ -67,14 +67,17 @@ environment is ready.
 ## Usage
 ### Command-line
 ```bash
-# Analyze a directory (default: data/)
+# Analyze a directory with legacy shortcuts
 cooper-beta data/ --workers 8 --prepare-workers 4 --out cooper_beta_results.csv
 
 # Analyze a single file
 cooper-beta path/to/structure.pdb
 
+# Hydra-style overrides
+cooper-beta input.path=data runtime.workers=8 runtime.prepare_workers=4 output.csv_path=cooper_beta_results.csv
+
 # Module entry point
-python -m cooper_beta data/ --workers 8 --prepare-workers 4
+python -m cooper_beta input.path=data runtime.workers=8 runtime.prepare_workers=4
 ```
 
 ### Legacy entry point
@@ -83,16 +86,30 @@ python main.py data/ 8 4
 ```
 
 ## Configuration
-Configuration lives in `src/cooper_beta/config.py` (`Config` class). Common settings include:
-- `DSSP_BIN_PATH`: explicit path to DSSP if it is not discoverable on PATH.
-- Slicing controls: `SLICE_STEP_SIZE`.
-- Fitting controls: `MIN_POINTS_PER_SLICE`, `MAX_FIT_RMSE`, `MIN_AXIS`, `MAX_AXIS`,
-  `MAX_FLATTENING`.
-- Decision logic: `BARREL_VALID_RATIO`, `USE_ADJUSTED_SCORE`, `MIN_SCORED_LAYER_FRAC`.
-- Rules for quality control: `NN_RULE_ENABLED`, `ANGLE_RULE_ENABLED`,
-  `ANGLE_ORDER_RULE_ENABLED` and their thresholds.
+Configuration is now managed by Hydra YAML files under `src/cooper_beta/conf/`.
+The default root config composes:
+- `runtime`: worker counts, DSSP path, strict DSSP behavior.
+- `input`: input path, accepted suffixes, chain/sheet/slice prefilters.
+- `slicer`: slice thickness and short-hole filling.
+- `analyzer`: ellipse-fit thresholds, decision thresholds, nearest-neighbor rule,
+  angle-gap rule, and sequence-angle order rule.
+- `output`: result CSV path.
 
-Adjust these constants to tune recall/precision for your dataset.
+Examples:
+
+```bash
+# Point to a custom DSSP binary
+cooper-beta runtime.dssp_bin_path=/opt/dssp/bin/mkdssp
+
+# Tune geometric thresholds
+cooper-beta analyzer.fit.max_rmse=2.5 analyzer.rules.angle.max_gap_deg=70
+
+# Disable one rule for ablation
+cooper-beta analyzer.rules.nearest_neighbor.enabled=false
+```
+
+The legacy flat `Config` class still exists for backward compatibility in Python
+code, but the supported configuration surface is now Hydra.
 
 ## Folder Structure
 ```
@@ -103,13 +120,20 @@ Adjust these constants to tune recall/precision for your dataset.
 │   └── cooper_beta/
 │       ├── __init__.py       # Package exports
 │       ├── __main__.py       # Module entry point
+│       ├── bootstrap.py      # Thread-environment bootstrap
 │       ├── cli.py            # CLI definition
-│       ├── config.py         # Tunable parameters
+│       ├── config.py         # Hydra schema + legacy compatibility layer
+│       ├── conf/             # Hydra YAML configuration tree
 │       ├── loader.py         # Structure parsing + DSSP
 │       ├── alignment.py      # PCA-based alignment
 │       ├── slicer.py         # Coordinate slicing
-│       ├── analyzer.py       # Beta-barrel analysis
-│       └── pipeline.py       # Pipeline orchestration
+│       ├── ellipse.py        # Rotated ellipse fitting
+│       ├── analysis_utils.py # Geometric helper functions
+│       ├── analyzer.py       # Beta-barrel analysis orchestration
+│       ├── pipeline.py       # Pipeline orchestration
+│       ├── pipeline_workers.py # Preparation + analysis workers
+│       ├── results.py        # Summary/CSV output helpers
+│       └── evaluation/       # Evaluation and ablation utilities
 ├── scripts/                  # Helper scripts
 └── tests/                    # Test suite
 ```

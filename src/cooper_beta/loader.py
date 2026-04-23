@@ -5,7 +5,7 @@ import tempfile
 import warnings
 
 from Bio import BiopythonWarning
-from Bio.PDB import MMCIFParser, PDBIO, PDBParser, Select
+from Bio.PDB import PDBIO, MMCIFParser, PDBParser, Select
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.Polypeptide import is_aa
 
@@ -107,7 +107,7 @@ def _strip_remark_350_to_temp_pdb(in_path: str) -> str:
     Returns the temporary file path; the caller is responsible for deleting it.
     """
     fd, out_path = tempfile.mkstemp(suffix=".pdb")
-    with open(in_path, "r", errors="ignore") as fin, os.fdopen(fd, "w") as fout:
+    with open(in_path, errors="ignore") as fin, os.fdopen(fd, "w") as fout:
         for line in fin:
             if line.startswith("REMARK 350"):
                 continue
@@ -135,14 +135,16 @@ class ProteinLoader:
     Load PDB/mmCIF structures, run DSSP, and extract per-chain CA data.
     """
 
-    def __init__(self, file_path, model_id=0, dssp_bin=None):
+    def __init__(self, file_path, model_id=0, dssp_bin=None, fail_on_dssp_error=True):
         self.file_path = file_path
         self.model_id = model_id
         self.dssp_bin = dssp_bin
+        self.fail_on_dssp_error = bool(fail_on_dssp_error)
 
         self.structure = None
         self.model = None
         self.dssp = None
+        self.dssp_error = None
 
         self._load_structure()
 
@@ -209,7 +211,10 @@ class ProteinLoader:
             self.dssp = DSSP(self.model, tmp_path, dssp=dssp_bin)
 
         except Exception as e:
-            print(f"  [Warning] DSSP failed for {os.path.basename(self.file_path)}: {e}")
+            self.dssp_error = f"DSSP failed for {os.path.basename(self.file_path)}: {e}"
+            if self.fail_on_dssp_error:
+                raise RuntimeError(self.dssp_error) from e
+            print(f"  [Warning] {self.dssp_error}")
             self.dssp = {}
 
         finally:

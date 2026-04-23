@@ -6,11 +6,13 @@ A small toolkit/pipeline to detect beta-barrel-like protein chains from PDB/mmCI
 from __future__ import annotations
 
 __all__ = [
+    "AppConfig",
     "Config",
     "ProteinLoader",
     "PCAAligner",
     "ProteinSlicer",
     "BarrelAnalyzer",
+    "build_config",
     "find_dssp_binary",
     "require_dssp_binary",
     "main",
@@ -18,7 +20,7 @@ __all__ = [
 
 from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
-from .config import Config
+from .config import AppConfig, Config, build_config
 from .loader import ProteinLoader
 from .pipeline import main
 from .runtime import find_dssp_binary, require_dssp_binary

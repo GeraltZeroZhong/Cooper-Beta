@@ -1,0 +1,30 @@
+fit:
+  min_points_per_slice: 7
+  max_rmse: 3.0
+  min_axis: 3.0
+  max_axis: 199.0
+  max_flattening: 3.5
+  least_squares:
+    method: trf
+    loss: soft_l1
+    f_scale: 1.0
+decision:
+  barrel_valid_ratio: 0.5
+  use_adjusted_score: true
+  min_intersections_for_scoring: 7
+  min_scored_layer_frac: 0.2
+rules:
+  nearest_neighbor:
+    enabled: true
+    max_robust_cv: 0.4
+    min_inlier_frac: 0.75
+    fail_as_junk: true
+  angle:
+    enabled: true
+    max_gap_deg: 80.0
+    fail_as_junk: false
+    order:
+      enabled: true
+      local_step_max: 1
+      min_local_frac: 1.0
+      max_mean_circ_dist_norm: 0.0

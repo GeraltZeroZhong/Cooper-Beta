@@ -29,7 +29,8 @@ def dssp_requirement_message() -> str:
         "Install DSSP with your system package manager or conda, then make sure the binary is on "
         "PATH.\n"
         "If DSSP is installed in a non-standard location, set "
-        "`cooper_beta.config.Config.DSSP_BIN_PATH` to the absolute executable path."
+        "`runtime.dssp_bin_path=/absolute/path/to/mkdssp` in the Hydra config or "
+        "`cooper_beta.config.Config.DSSP_BIN_PATH` for legacy code."
     )
 
 

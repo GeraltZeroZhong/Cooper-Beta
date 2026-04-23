@@ -160,6 +160,7 @@ Recommended options:
        pip install -e ".[full]"
 
 You can also point Cooper-Beta to a custom DSSP binary with
-`cooper_beta.config.Config.DSSP_BIN_PATH`.
+`runtime.dssp_bin_path=/absolute/path/to/mkdssp` (Hydra)
+or `cooper_beta.config.Config.DSSP_BIN_PATH` (legacy Python API).
 EOF
 exit 1
