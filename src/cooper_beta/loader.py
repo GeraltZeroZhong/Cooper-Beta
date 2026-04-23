@@ -1,6 +1,5 @@
 import os
 import re
-import shutil
 import string
 import tempfile
 import warnings
@@ -9,6 +8,8 @@ from Bio import BiopythonWarning
 from Bio.PDB import MMCIFParser, PDBIO, PDBParser, Select
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.Polypeptide import is_aa
+
+from .runtime import require_dssp_binary
 
 warnings.simplefilter("ignore", BiopythonWarning)
 
@@ -180,9 +181,7 @@ class ProteinLoader:
         if self.dssp is not None:
             return
 
-        dssp_bin = self.dssp_bin or shutil.which("mkdssp") or shutil.which("dssp")
-        if not dssp_bin:
-            raise RuntimeError("未找到 mkdssp/dssp，请先安装并加入 PATH。")
+        dssp_bin = require_dssp_binary(self.dssp_bin)
 
         # DSSP 前处理（对 mkdssp/gemmi 严格解析最关键）
         _sanitize_blank_chain_ids(self.model)

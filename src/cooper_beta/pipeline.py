@@ -66,6 +66,7 @@ from .loader import ProteinLoader
 from .alignment import PCAAligner
 from .slicer import ProteinSlicer
 from .analyzer import BarrelAnalyzer
+from .runtime import require_dssp_binary
 
 
 def _analyze_chain_payload(payload):
@@ -274,6 +275,8 @@ def _collect_payloads(files, prepare_workers=1):
                 payloads.extend(res)
 
     return payloads
+
+
 def main(input_path, workers=None, prepare_workers=None, out_csv='cooper_beta_results.csv'):
     out_csv = str(out_csv)
     if os.path.isdir(input_path):
@@ -284,6 +287,7 @@ def main(input_path, workers=None, prepare_workers=None, out_csv='cooper_beta_re
     else:
         files = [input_path]
 
+    require_dssp_binary(Config.DSSP_BIN_PATH)
     payloads = _collect_payloads(files, prepare_workers=prepare_workers)
     if not payloads:
         print("无可用任务")

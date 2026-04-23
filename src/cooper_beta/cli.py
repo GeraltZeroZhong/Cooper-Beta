@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import os as _os
@@ -11,9 +10,9 @@ _os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
 _os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 import argparse
-from pathlib import Path
 
 from .pipeline import main as _run
+from .runtime import runtime_summary
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -47,7 +46,18 @@ def main(argv: list[str] | None = None) -> None:
         default="cooper_beta_results.csv",
         help="输出 CSV 路径（默认：cooper_beta_results.csv）",
     )
+    ap.add_argument(
+        "--check-env",
+        action="store_true",
+        help="只检查 Python 与 DSSP 是否可用，然后退出",
+    )
     args = ap.parse_args(argv)
+
+    if args.check_env:
+        summary = runtime_summary()
+        print(f"Python: {summary['python']}")
+        print(f"DSSP: {summary['dssp']}")
+        return
 
     prep = args.prepare_workers if args.prepare_workers is not None else args.workers
     _run(args.path, workers=args.workers, prepare_workers=prep, out_csv=args.out)
