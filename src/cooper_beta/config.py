@@ -100,9 +100,15 @@ class AngleRuleConfig:
 
 
 @dataclass
+class SequenceCoreRuleConfig:
+    enabled: bool = True
+
+
+@dataclass
 class AnalyzerRulesConfig:
     nearest_neighbor: NearestNeighborRuleConfig = field(default_factory=NearestNeighborRuleConfig)
     angle: AngleRuleConfig = field(default_factory=AngleRuleConfig)
+    sequence_core: SequenceCoreRuleConfig = field(default_factory=SequenceCoreRuleConfig)
 
 
 @dataclass
@@ -147,6 +153,7 @@ LEGACY_OVERRIDE_PATHS = {
     "ANGLE_ORDER_MIN_LOCAL_FRAC": "analyzer.rules.angle.order.min_local_frac",
     "ANGLE_ORDER_MAX_MEAN_CIRC_DIST_NORM": "analyzer.rules.angle.order.max_mean_circ_dist_norm",
     "ANGLE_FAIL_AS_JUNK": "analyzer.rules.angle.fail_as_junk",
+    "SEQUENCE_CORE_RULE_ENABLED": "analyzer.rules.sequence_core.enabled",
     "MIN_CHAIN_RESIDUES": "input.min_chain_residues",
     "MIN_SHEET_RESIDUES": "input.min_sheet_residues",
     "MIN_INFORMATIVE_SLICES": "input.min_informative_slices",

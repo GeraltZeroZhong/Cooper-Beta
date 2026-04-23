@@ -6,6 +6,7 @@ import numpy as np
 
 from .analysis_utils import (
     angular_gap_stats,
+    collapse_points_by_strand,
     nearest_neighbor_spacing_stats,
     sequence_angle_order_stats,
 )
@@ -39,6 +40,7 @@ LEGACY_ANALYZER_OVERRIDE_PATHS = {
         "max_mean_circ_dist_norm",
     ),
     "angle_fail_as_junk": ("rules", "angle", "fail_as_junk"),
+    "sequence_core_rule_enabled": ("rules", "sequence_core", "enabled"),
 }
 
 
@@ -69,6 +71,12 @@ class BarrelAnalyzer:
             return None
         return fit_rotated_ellipse(pts[:, :2], self.config.fit.least_squares)
 
+    def _minimum_points_for_scoring(self) -> int:
+        return max(
+            self.config.decision.min_intersections_for_scoring,
+            self.config.fit.min_points_per_slice,
+        )
+
     def _layer_result(
         self,
         z_value: float,
@@ -77,6 +85,10 @@ class BarrelAnalyzer:
         fit: dict[str, float] | None,
         valid: bool,
         reason: str,
+        raw_point_count: int | None = None,
+        collapsed_point_count: int | None = None,
+        trim_left: int = 0,
+        trim_right: int = 0,
         nn_stats: tuple[float, float, float, float] | None = None,
         angle_stats: tuple[float, float, int, float, float] | None = None,
         order_stats: dict[str, float | int] | None = None,
@@ -84,9 +96,19 @@ class BarrelAnalyzer:
         return {
             "z": float(z_value),
             "n_points": int(point_count),
+            "raw_n_points": int(raw_point_count) if raw_point_count is not None else int(point_count),
+            "collapsed_n_points": (
+                int(collapsed_point_count) if collapsed_point_count is not None else int(point_count)
+            ),
+            "seq_core_trim_left": int(trim_left),
+            "seq_core_trim_right": int(trim_right),
             "fit": fit,
             "valid": bool(valid),
             "reason": reason,
+            "fit_rmse_all": fit.get("rmse_all") if fit else None,
+            "fit_median_abs_dist": fit.get("median_abs_dist") if fit else None,
+            "fit_used_n": fit.get("used_n") if fit else None,
+            "fit_inlier_frac": fit.get("inlier_frac") if fit else None,
             "nn_median": nn_stats[0] if nn_stats else None,
             "nn_sigma": nn_stats[1] if nn_stats else None,
             "nn_cv": nn_stats[2] if nn_stats else None,
@@ -172,6 +194,214 @@ class BarrelAnalyzer:
 
         return angle_stats, order_stats, (gap_ok and order_ok), failure_reason
 
+    def _evaluate_slice_points(
+        self,
+        points: list[tuple[float, ...]] | np.ndarray,
+    ) -> dict[str, object]:
+        pts = np.asarray(points, dtype=float)
+        point_count = int(pts.shape[0]) if pts.ndim == 2 else 0
+        minimum_points_for_scoring = self._minimum_points_for_scoring()
+
+        base_result: dict[str, object] = {
+            "points": pts,
+            "point_count": point_count,
+            "fit": None,
+            "valid": False,
+            "scored": False,
+            "reason": f"JUNK(too few intersections: need >= {minimum_points_for_scoring})",
+            "nn_stats": None,
+            "angle_stats": None,
+            "order_stats": None,
+        }
+        if pts.ndim != 2 or point_count < minimum_points_for_scoring:
+            return base_result
+
+        points_xy = np.asarray(pts[:, :2], dtype=float)
+
+        nn_stats, nn_ok = self._evaluate_nn_rule(points_xy)
+        angle_stats, order_stats, angle_ok, angle_failure_reason = self._evaluate_angle_rule(
+            pts,
+            points_xy,
+        )
+
+        base_result.update(
+            {
+                "nn_stats": nn_stats,
+                "angle_stats": angle_stats,
+                "order_stats": order_stats,
+            }
+        )
+
+        if (not nn_ok) and self.config.rules.nearest_neighbor.fail_as_junk:
+            base_result["reason"] = "JUNK(irregular nearest-neighbor spacing)"
+            return base_result
+
+        if (not angle_ok) and self.config.rules.angle.fail_as_junk:
+            base_result["reason"] = f"JUNK({angle_failure_reason or 'Angle rule failed'})"
+            return base_result
+
+        base_result["scored"] = True
+
+        if not nn_ok:
+            base_result["reason"] = "Nearest-neighbor spacing is irregular"
+            return base_result
+
+        if not angle_ok:
+            base_result["reason"] = angle_failure_reason or "Angle rule failed"
+            return base_result
+
+        fit = self.fit_slice(pts)
+        base_result["fit"] = fit
+        if fit is None:
+            base_result["reason"] = "Ellipse fit failed"
+            return base_result
+
+        axis_a = fit["a"]
+        axis_b = fit["b"]
+        rmse = fit["rmse"]
+        fit_cfg = self.config.fit
+
+        if rmse > fit_cfg.max_rmse:
+            base_result["reason"] = f"Ellipse fit RMSE exceeds {fit_cfg.max_rmse}"
+            return base_result
+        if axis_a < fit_cfg.min_axis or axis_b < fit_cfg.min_axis:
+            base_result["reason"] = "Ellipse axis is below the minimum threshold"
+            return base_result
+        if axis_a > fit_cfg.max_axis or axis_b > fit_cfg.max_axis:
+            base_result["reason"] = "Ellipse axis exceeds the maximum threshold"
+            return base_result
+        if (axis_a / axis_b) > fit_cfg.max_flattening:
+            base_result["reason"] = "Slice is too flattened"
+            return base_result
+
+        base_result["valid"] = True
+        base_result["reason"] = "OK"
+        return base_result
+
+    @staticmethod
+    def _candidate_sort_key(
+        evaluation: dict[str, object],
+        *,
+        trim_left: int,
+        trim_right: int,
+    ) -> tuple[int, float, float, float, float, int, int, int]:
+        fit = evaluation.get("fit") or {}
+        nn_stats = evaluation.get("nn_stats")
+        order_stats = evaluation.get("order_stats") or {}
+        return (
+            int(trim_left + trim_right),
+            float(fit.get("rmse", float("inf"))),
+            1.0 - float(nn_stats[3]) if nn_stats else float("inf"),
+            float(order_stats.get("order_mean_circ_dist_norm", 0.0)),
+            1.0 - float(order_stats.get("order_local_frac", 1.0)),
+            -int(evaluation.get("point_count", 0)),
+            int(trim_left),
+            int(trim_right),
+        )
+
+    def _material_core_improvement(
+        self,
+        full_evaluation: dict[str, object],
+        candidate_evaluation: dict[str, object],
+    ) -> bool:
+        if not candidate_evaluation["valid"]:
+            return False
+        if not full_evaluation["valid"]:
+            return True
+
+        full_fit = full_evaluation.get("fit") or {}
+        candidate_fit = candidate_evaluation.get("fit") or {}
+        fit_improvement = (
+            float(full_fit.get("rmse", float("inf")))
+            - float(candidate_fit.get("rmse", float("inf")))
+            >= max(1e-3, 0.02 * float(self.config.fit.max_rmse))
+        )
+
+        full_nn_stats = full_evaluation.get("nn_stats")
+        candidate_nn_stats = candidate_evaluation.get("nn_stats")
+        inlier_improvement = (
+            candidate_nn_stats is not None
+            and full_nn_stats is not None
+            and (float(candidate_nn_stats[3]) - float(full_nn_stats[3]) >= 0.05)
+        )
+
+        full_order_stats = full_evaluation.get("order_stats") or {}
+        candidate_order_stats = candidate_evaluation.get("order_stats") or {}
+        order_improvement = (
+            float(full_order_stats.get("order_mean_circ_dist_norm", 0.0))
+            - float(candidate_order_stats.get("order_mean_circ_dist_norm", 0.0))
+            >= 0.05
+        ) or (
+            float(candidate_order_stats.get("order_local_frac", 1.0))
+            - float(full_order_stats.get("order_local_frac", 1.0))
+            >= 0.10
+        )
+
+        return fit_improvement or inlier_improvement or order_improvement
+
+    def _select_sequence_core(
+        self,
+        points: list[tuple[float, ...]] | np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, int], dict[str, object]]:
+        raw_points = np.asarray(points, dtype=float)
+        collapsed_points = collapse_points_by_strand(raw_points)
+        if collapsed_points.ndim != 2:
+            collapsed_points = raw_points
+
+        if collapsed_points.shape[1] >= 4:
+            full_points = collapsed_points[:, :3]
+            ordered_points = collapsed_points[
+                np.argsort(collapsed_points[:, 2], kind="mergesort")
+            ]
+        else:
+            full_points = collapsed_points[:, :3]
+            ordered_points = full_points[np.argsort(full_points[:, 2], kind="mergesort")]
+
+        diagnostics = {
+            "raw_point_count": int(raw_points.shape[0]) if raw_points.ndim == 2 else 0,
+            "collapsed_point_count": int(full_points.shape[0]) if full_points.ndim == 2 else 0,
+            "trim_left": 0,
+            "trim_right": 0,
+        }
+
+        full_evaluation = self._evaluate_slice_points(full_points)
+        best_points = full_points
+        best_evaluation = full_evaluation
+        best_key = None
+
+        if not self.config.rules.sequence_core.enabled:
+            return best_points, diagnostics, best_evaluation
+
+        minimum_points_for_scoring = self._minimum_points_for_scoring()
+        total_points = int(ordered_points.shape[0]) if ordered_points.ndim == 2 else 0
+        if total_points <= minimum_points_for_scoring:
+            return best_points, diagnostics, best_evaluation
+
+        for start in range(total_points):
+            for stop in range(start + minimum_points_for_scoring, total_points + 1):
+                if start == 0 and stop == total_points:
+                    continue
+
+                candidate = ordered_points[start:stop]
+                candidate_points = candidate[:, :3] if candidate.shape[1] >= 4 else candidate
+                evaluation = self._evaluate_slice_points(candidate_points)
+                if not self._material_core_improvement(full_evaluation, evaluation):
+                    continue
+
+                key = self._candidate_sort_key(
+                    evaluation,
+                    trim_left=start,
+                    trim_right=total_points - stop,
+                )
+                if best_key is None or key < best_key:
+                    best_key = key
+                    best_points = candidate_points
+                    best_evaluation = evaluation
+                    diagnostics["trim_left"] = start
+                    diagnostics["trim_right"] = total_points - stop
+
+        return best_points, diagnostics, best_evaluation
+
     def analyze(self, slices_dict: dict[float, list[tuple[float, ...]]]) -> dict[str, object]:
         """
         Analyze active slices and return per-layer diagnostics plus aggregate scores.
@@ -191,127 +421,23 @@ class BarrelAnalyzer:
                 "msg": "No active slices were found.",
             }
 
-        minimum_points_for_scoring = max(
-            self.config.decision.min_intersections_for_scoring,
-            self.config.fit.min_points_per_slice,
-        )
         total_scored_layers = 0
 
         for z_value in active_layers:
             points = slices_dict[z_value]
-            point_count = len(points)
+            selected_points, core_stats, evaluation = self._select_sequence_core(points)
+            point_count = int(evaluation["point_count"])
 
-            if point_count < minimum_points_for_scoring:
-                results.append(
-                    self._layer_result(
-                        z_value,
-                        point_count,
-                        fit=None,
-                        valid=False,
-                        reason=(
-                            f"JUNK(too few intersections: need >= {minimum_points_for_scoring})"
-                        ),
-                    )
-                )
-                continue
+            if evaluation["scored"]:
+                total_scored_layers += 1
 
-            points_xy = np.asarray([(point[0], point[1]) for point in points], dtype=float)
-
-            nn_stats, nn_ok = self._evaluate_nn_rule(points_xy)
-            if (not nn_ok) and self.config.rules.nearest_neighbor.fail_as_junk:
-                results.append(
-                    self._layer_result(
-                        z_value,
-                        point_count,
-                        fit=None,
-                        valid=False,
-                        reason="JUNK(irregular nearest-neighbor spacing)",
-                        nn_stats=nn_stats,
-                    )
-                )
-                continue
-
-            angle_stats, order_stats, angle_ok, angle_failure_reason = self._evaluate_angle_rule(
-                points,
-                points_xy,
-            )
-            if (not angle_ok) and self.config.rules.angle.fail_as_junk:
-                results.append(
-                    self._layer_result(
-                        z_value,
-                        point_count,
-                        fit=None,
-                        valid=False,
-                        reason=f"JUNK({angle_failure_reason or 'Angle rule failed'})",
-                        nn_stats=nn_stats,
-                        angle_stats=angle_stats,
-                        order_stats=order_stats,
-                    )
-                )
-                continue
-
-            total_scored_layers += 1
-
-            if (not nn_ok) and (not self.config.rules.nearest_neighbor.fail_as_junk):
-                results.append(
-                    self._layer_result(
-                        z_value,
-                        point_count,
-                        fit=None,
-                        valid=False,
-                        reason="Nearest-neighbor spacing is irregular",
-                        nn_stats=nn_stats,
-                        angle_stats=angle_stats,
-                        order_stats=order_stats,
-                    )
-                )
-                continue
-
-            if (not angle_ok) and (not self.config.rules.angle.fail_as_junk):
-                results.append(
-                    self._layer_result(
-                        z_value,
-                        point_count,
-                        fit=None,
-                        valid=False,
-                        reason=angle_failure_reason or "Angle rule failed",
-                        nn_stats=nn_stats,
-                        angle_stats=angle_stats,
-                        order_stats=order_stats,
-                    )
-                )
-                continue
-
-            fit = self.fit_slice(points)
-            if fit is None:
-                reason = "Ellipse fit failed"
-                is_valid = False
-            else:
-                axis_a = fit["a"]
-                axis_b = fit["b"]
-                rmse = fit["rmse"]
-                fit_cfg = self.config.fit
-
-                if rmse > fit_cfg.max_rmse:
-                    reason = f"Ellipse fit RMSE exceeds {fit_cfg.max_rmse}"
-                    is_valid = False
-                elif axis_a < fit_cfg.min_axis or axis_b < fit_cfg.min_axis:
-                    reason = "Ellipse axis is below the minimum threshold"
-                    is_valid = False
-                elif axis_a > fit_cfg.max_axis or axis_b > fit_cfg.max_axis:
-                    reason = "Ellipse axis exceeds the maximum threshold"
-                    is_valid = False
-                elif (axis_a / axis_b) > fit_cfg.max_flattening:
-                    reason = "Slice is too flattened"
-                    is_valid = False
-                else:
-                    reason = "OK"
-                    is_valid = True
-                    valid_radii.append((axis_a + axis_b) / 2.0)
-
-            if is_valid:
+            fit = evaluation["fit"]
+            is_valid = bool(evaluation["valid"])
+            reason = str(evaluation["reason"])
+            if is_valid and fit is not None:
                 valid_layers += 1
                 valid_scored_layers += 1
+                valid_radii.append((fit["a"] + fit["b"]) / 2.0)
 
             results.append(
                 self._layer_result(
@@ -320,9 +446,13 @@ class BarrelAnalyzer:
                     fit=fit,
                     valid=is_valid,
                     reason=reason,
-                    nn_stats=nn_stats,
-                    angle_stats=angle_stats,
-                    order_stats=order_stats,
+                    raw_point_count=core_stats["raw_point_count"],
+                    collapsed_point_count=core_stats["collapsed_point_count"],
+                    trim_left=core_stats["trim_left"],
+                    trim_right=core_stats["trim_right"],
+                    nn_stats=evaluation["nn_stats"],
+                    angle_stats=evaluation["angle_stats"],
+                    order_stats=evaluation["order_stats"],
                 )
             )
 
