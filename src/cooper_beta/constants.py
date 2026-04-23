@@ -25,24 +25,58 @@ EPSILON = 1e-12
 TOLERANCE = 1e-9
 COVARIANCE_FLOOR = 1e-12
 
+RESULT_BARREL = "BARREL"
+RESULT_NON_BARREL = "NON_BARREL"
+RESULT_FILTERED_OUT = "FILTERED_OUT"
+RESULT_ERROR = "ERROR"
+LEGACY_RESULT_SKIP = "SKIP"
+
 DEFAULT_RESULT_COLUMNS = (
     "filename",
     "chain",
     "result",
+    "result_stage",
+    "decision_score",
+    "decision_basis",
+    "decision_threshold",
+    "score_raw",
     "score_adjust",
     "valid_layers",
+    "scored_layers",
+    "total_layers",
+    "valid_layer_frac",
+    "scored_layer_frac",
+    "junk_layers",
+    "invalid_layers",
+    "avg_radius",
+    "chain_residues",
+    "sheet_residues",
+    "informative_slices",
+    "reason",
     "all_adjusted_layers",
     "all_layers",
+)
+
+DEFAULT_SUMMARY_COLUMNS = (
+    "filename",
+    "chain",
+    "result",
+    "result_stage",
+    "decision_score",
+    "decision_basis",
+    "layer_counts",
     "reason",
 )
 
 SUMMARY_COLUMN_WIDTHS = {
     "filename": 20,
     "chain": 5,
-    "result": 10,
-    "score_adjust": 8,
-    "valid_layers": 9,
-    "reason": 40,
+    "result": 14,
+    "result_stage": 10,
+    "decision_score": 8,
+    "decision_basis": 8,
+    "layer_counts": 12,
+    "reason": 56,
 }
 
 THREAD_ENV_DEFAULTS = {

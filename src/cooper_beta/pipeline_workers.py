@@ -10,6 +10,12 @@ import numpy as np
 from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
 from .config import AppConfig
+from .constants import (
+    RESULT_BARREL,
+    RESULT_ERROR,
+    RESULT_FILTERED_OUT,
+    RESULT_NON_BARREL,
+)
 from .loader import ProteinLoader
 from .prepare_cache import load_prepare_payloads, store_prepare_payloads
 from .slicer import ProteinSlicer
@@ -26,6 +32,10 @@ except Exception:  # pragma: no cover
         print(message)
 
 
+def _format_below_threshold_reason(metric_name: str, observed: int, threshold: int) -> str:
+    return f"{metric_name} below threshold ({observed} < {threshold})"
+
+
 def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[str, object]:
     """
     Analyze one chain payload and return the final row written to the results table.
@@ -36,64 +46,149 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     min_chain_residues = cfg.input.min_chain_residues
     min_sheet_residues = cfg.input.min_sheet_residues
     min_informative_slices = cfg.input.min_informative_slices
+    decision_cfg = cfg.analyzer.decision
+    default_decision_basis = "adjusted" if decision_cfg.use_adjusted_score else "raw"
+    chain_residue_count = len(residues_data)
+    sheet_residue_coords = [
+        residue["coord"] for residue in residues_data if residue.get("is_sheet", False)
+    ]
+    sheet_residue_count = len(sheet_residue_coords)
 
     def build_row(
         result: str,
         reason: str,
         report: dict[str, object] | None = None,
+        *,
+        result_stage: str,
+        informative_slices: int | None = None,
     ) -> dict[str, object]:
         report = report or {}
+        score_raw = float(report.get("score", 0.0))
+        score_adjust = float(report.get("score_adjust", 0.0))
+        decision_basis = str(report.get("decision_basis", default_decision_basis))
+        decision_score = float(
+            report.get(
+                "decision_score",
+                score_adjust if decision_basis == "adjusted" else score_raw,
+            )
+        )
+        total_layers = int(report.get("total_layers", informative_slices or 0))
+        scored_layers = int(report.get("total_scored_layers", 0))
+        valid_layers = int(report.get("valid_layers", 0))
+        valid_layer_frac = float(
+            report.get(
+                "valid_layer_frac",
+                (valid_layers / total_layers) if total_layers else 0.0,
+            )
+        )
+        scored_layer_frac = float(
+            report.get(
+                "scored_layer_frac",
+                (scored_layers / total_layers) if total_layers else 0.0,
+            )
+        )
+        informative_slice_count = int(
+            report.get("informative_slices", informative_slices if informative_slices is not None else total_layers)
+        )
         return {
             "filename": filename,
             "chain": chain_id,
             "result": result,
-            "score_adjust": float(report.get("score_adjust", 0.0)),
-            "valid_layers": int(report.get("valid_layers", 0)),
-            "all_adjusted_layers": int(report.get("total_scored_layers", 0)),
-            "all_layers": int(report.get("total_layers", 0)),
+            "result_stage": result_stage,
+            "decision_score": decision_score,
+            "decision_basis": decision_basis,
+            "decision_threshold": float(
+                report.get("decision_threshold", decision_cfg.barrel_valid_ratio)
+            ),
+            "score_raw": score_raw,
+            "score_adjust": score_adjust,
+            "valid_layers": valid_layers,
+            "scored_layers": scored_layers,
+            "total_layers": total_layers,
+            "valid_layer_frac": valid_layer_frac,
+            "scored_layer_frac": scored_layer_frac,
+            "junk_layers": int(report.get("junk_layers", 0)),
+            "invalid_layers": int(report.get("invalid_layers", 0)),
+            "avg_radius": float(report.get("avg_radius", 0.0)),
+            "chain_residues": int(report.get("chain_residues", chain_residue_count)),
+            "sheet_residues": int(report.get("sheet_residues", sheet_residue_count)),
+            "informative_slices": informative_slice_count,
             "reason": reason,
+            # Keep the legacy names for downstream notebooks and older CSV consumers.
+            "all_adjusted_layers": scored_layers,
+            "all_layers": total_layers,
         }
 
-    if len(residues_data) < min_chain_residues:
-        return build_row("SKIP", f"Chain has fewer than {min_chain_residues} residues")
+    if chain_residue_count < min_chain_residues:
+        return build_row(
+            RESULT_FILTERED_OUT,
+            _format_below_threshold_reason(
+                "Chain residues",
+                chain_residue_count,
+                min_chain_residues,
+            ),
+            result_stage="prefilter",
+        )
 
     all_coordinates = np.array([residue["coord"] for residue in residues_data], dtype=float)
-    sheet_coordinates = np.array(
-        [residue["coord"] for residue in residues_data if residue.get("is_sheet", False)],
-        dtype=float,
-    )
-    if sheet_coordinates.shape[0] < min_sheet_residues:
-        return build_row("SKIP", "Not enough beta-sheet residues")
+    if sheet_residue_count < min_sheet_residues:
+        return build_row(
+            RESULT_FILTERED_OUT,
+            _format_below_threshold_reason(
+                "Beta-sheet residues",
+                sheet_residue_count,
+                min_sheet_residues,
+            ),
+            result_stage="prefilter",
+        )
+    sheet_coordinates = np.array(sheet_residue_coords, dtype=float)
 
     try:
         aligner = PCAAligner()
         aligner.fit(sheet_coordinates)
         aligned_coordinates = aligner.transform(all_coordinates)
     except Exception:
-        return build_row("ERROR", "Alignment failed")
+        return build_row(RESULT_ERROR, "Alignment failed", result_stage="error")
 
     slicer = ProteinSlicer(
         step_size=cfg.slicer.step_size,
         fill_sheet_hole_length=cfg.slicer.fill_sheet_hole_length,
     )
     slices = slicer.slice_structure(aligned_coordinates, residues_data)
-    if len(slices) < min_informative_slices:
-        return build_row("SKIP", "Too few informative slices")
+    informative_slice_count = len(slices)
+    if informative_slice_count < min_informative_slices:
+        return build_row(
+            RESULT_FILTERED_OUT,
+            _format_below_threshold_reason(
+                "Informative slices",
+                informative_slice_count,
+                min_informative_slices,
+            ),
+            result_stage="prefilter",
+            informative_slices=informative_slice_count,
+        )
 
     analyzer = BarrelAnalyzer(cfg.analyzer)
     try:
         report = analyzer.analyze(slices)
     except Exception:
-        fallback = {"total_layers": len([z_value for z_value in slices if slices[z_value]])}
-        return build_row("ERROR", "Slice analyzer crashed unexpectedly", fallback)
+        fallback = {"total_layers": informative_slice_count}
+        return build_row(
+            RESULT_ERROR,
+            "Slice analyzer crashed unexpectedly",
+            fallback,
+            result_stage="error",
+            informative_slices=informative_slice_count,
+        )
 
+    report = dict(report)
     score_raw = float(report.get("score", 0.0))
     score_adjust = float(report.get("score_adjust", 0.0))
-    decision_cfg = cfg.analyzer.decision
     final_score = score_adjust if decision_cfg.use_adjusted_score else score_raw
 
     total_layers = int(report.get("total_layers", 0))
     total_scored_layers = int(report.get("total_scored_layers", 0))
+    scored_layer_frac = (total_scored_layers / total_layers) if total_layers else 0.0
     enough_scored_layers = True
     if decision_cfg.use_adjusted_score:
         enough_scored_layers = (total_layers > 0) and (
@@ -121,14 +216,41 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     else:
         main_reason = "Too few valid slices"
 
+    report.update(
+        {
+            "decision_score": final_score,
+            "decision_basis": default_decision_basis,
+            "decision_threshold": float(decision_cfg.barrel_valid_ratio),
+            "valid_layer_frac": (int(report.get("valid_layers", 0)) / total_layers)
+            if total_layers
+            else 0.0,
+            "scored_layer_frac": scored_layer_frac,
+            "junk_layers": len(junk_reasons),
+            "invalid_layers": len(invalid_reasons),
+            "chain_residues": chain_residue_count,
+            "sheet_residues": sheet_residue_count,
+            "informative_slices": informative_slice_count,
+        }
+    )
+
     if is_barrel:
         reason = "OK"
     elif not enough_scored_layers:
-        reason = "Too few scored slices for a stable decision"
+        reason = (
+            "Too few scored slices for a stable decision "
+            f"({total_scored_layers}/{total_layers} = {scored_layer_frac:.2f}, "
+            f"need > {float(decision_cfg.min_scored_layer_frac):.2f})"
+        )
     else:
         reason = main_reason
 
-    return build_row("BARREL" if is_barrel else "NON_BARREL", reason, report)
+    return build_row(
+        RESULT_BARREL if is_barrel else RESULT_NON_BARREL,
+        reason,
+        report,
+        result_stage="decision",
+        informative_slices=informative_slice_count,
+    )
 
 
 def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] | dict[str, str]:
@@ -157,8 +279,6 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
         except Exception as exc:
             return {"_error": f"{filename}: {exc}"}
 
-        if len(residues_data) < cfg.input.min_chain_residues:
-            continue
         payloads.append(
             {
                 "filename": filename,
@@ -228,7 +348,8 @@ def run_analysis(
                         {
                             "filename": "",
                             "chain": "",
-                            "result": "ERROR",
+                            "result": RESULT_ERROR,
+                            "result_stage": "error",
                             "reason": f"Worker crashed: {exc}",
                         }
                     )

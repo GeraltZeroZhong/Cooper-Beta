@@ -12,8 +12,23 @@ def ensure_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
         "filename",
         "chain",
         "result",
+        "result_stage",
+        "decision_score",
+        "decision_basis",
+        "decision_threshold",
+        "score_raw",
         "score_adjust",
         "valid_layers",
+        "scored_layers",
+        "total_layers",
+        "valid_layer_frac",
+        "scored_layer_frac",
+        "junk_layers",
+        "invalid_layers",
+        "avg_radius",
+        "chain_residues",
+        "sheet_residues",
+        "informative_slices",
         "all_adjusted_layers",
         "all_layers",
         "reason",
@@ -102,6 +117,9 @@ def compute_file_metrics(
 ) -> tuple[dict[str, float | int], dict[str, int]]:
     positives = aggregated_dataframe[aggregated_dataframe["split"] == "true"].copy()
     negatives = aggregated_dataframe[aggregated_dataframe["split"] == "false"].copy()
+    filtered_column = (
+        "any_filtered_out" if "any_filtered_out" in aggregated_dataframe.columns else "any_skip"
+    )
 
     tp = int(positives["pred_barrel_any"].astype(int).sum()) if len(positives) else 0
     fn = int(len(positives) - tp) if len(positives) else 0
@@ -112,7 +130,13 @@ def compute_file_metrics(
     extra = {
         "n_true_files": int(len(positives)),
         "n_false_files": int(len(negatives)),
-        "true_any_skip": int(positives["any_skip"].astype(int).sum()) if len(positives) else 0,
-        "false_any_skip": int(negatives["any_skip"].astype(int).sum()) if len(negatives) else 0,
+        "true_any_filtered_out": (
+            int(positives[filtered_column].astype(int).sum()) if len(positives) else 0
+        ),
+        "false_any_filtered_out": (
+            int(negatives[filtered_column].astype(int).sum()) if len(negatives) else 0
+        ),
     }
+    extra["true_any_skip"] = extra["true_any_filtered_out"]
+    extra["false_any_skip"] = extra["false_any_filtered_out"]
     return metrics, extra

@@ -11,7 +11,8 @@ whether each chain is classified as a beta-barrel.
 - Parallel preparation (DSSP/structure parsing) and analysis phases.
 - Fast OpenCV-direct ellipse fitting plus adjustable geometric rules (nearest-neighbor spacing,
   angular coverage, and sequence/angle order consistency).
-- CSV output with per-chain classification metrics and failure reasons.
+- CSV output with per-chain classification metrics, prefilter outcomes
+  (`FILTERED_OUT`), and failure reasons.
 - CLI and module entry points (`cooper-beta`, `python -m cooper_beta`).
 
 ## Installation
@@ -118,6 +119,11 @@ cooper-beta analyzer.rules.nearest_neighbor.enabled=false
 
 The legacy flat `Config` class still exists for backward compatibility in Python
 code, but the supported configuration surface is now Hydra.
+
+The default result CSV reports both the raw and adjusted scores, the actual
+decision score/basis used for classification, layer coverage counts/fractions,
+and prefilter context such as chain residues, beta-sheet residues, and
+informative slices.
 
 By default, Cooper-Beta derives both worker counts from the visible CPU set
 (`os.sched_getaffinity()` when available) and keeps one core in reserve via
