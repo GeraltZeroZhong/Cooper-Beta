@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 cooper_beta
 
@@ -12,12 +11,15 @@ __all__ = [
     "PCAAligner",
     "ProteinSlicer",
     "BarrelAnalyzer",
+    "find_dssp_binary",
+    "require_dssp_binary",
     "main",
 ]
 
+from .alignment import PCAAligner
+from .analyzer import BarrelAnalyzer
 from .config import Config
 from .loader import ProteinLoader
-from .alignment import PCAAligner
-from .slicer import ProteinSlicer
-from .analyzer import BarrelAnalyzer
 from .pipeline import main
+from .runtime import find_dssp_binary, require_dssp_binary
+from .slicer import ProteinSlicer
