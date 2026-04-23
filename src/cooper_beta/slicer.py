@@ -6,7 +6,6 @@ from .constants import (
     DEFAULT_FILL_SHEET_HOLE_LENGTH,
     DEFAULT_SLICE_STEP_SIZE,
     EPSILON,
-    SEQUENCE_INTERSECTION_OFFSET,
     TOLERANCE,
 )
 
@@ -48,6 +47,31 @@ class ProteinSlicer:
             i = j
         return flags
 
+    @staticmethod
+    def _assign_sheet_runs(sheet_flags):
+        """Return per-residue run IDs plus the sequence midpoint of each run."""
+        flags = np.asarray(sheet_flags, dtype=bool)
+        run_ids = np.full(flags.shape[0], -1, dtype=int)
+        run_seq_pos: list[float] = []
+
+        run_id = 0
+        index = 0
+        while index < flags.shape[0]:
+            if not flags[index]:
+                index += 1
+                continue
+
+            start = index
+            while index < flags.shape[0] and flags[index]:
+                index += 1
+            end = index - 1
+
+            run_ids[start:index] = run_id
+            run_seq_pos.append((float(start) + float(end)) / 2.0)
+            run_id += 1
+
+        return run_ids, np.asarray(run_seq_pos, dtype=float)
+
     def slice_structure(self, aligned_coords, residues_data):
         """
         Args:
@@ -55,12 +79,12 @@ class ProteinSlicer:
             residues_data: ``list[dict]`` containing at least ``is_sheet``.
 
         Returns:
-            dict[float, list[tuple]]: ``z_plane -> [(x, y, seq_pos), ...]``
+            dict[float, list[tuple]]: ``z_plane -> [(x, y, seq_pos, strand_id), ...]``
 
         Notes:
-            ``seq_pos`` is derived from the residue segment ``(i, i + 1)`` and is
-            defined as ``i + 0.5``. It is used later to compare ``seq_order`` and
-            ``angle_order`` on the same set of intersections.
+            ``seq_pos`` is derived from the midpoint of one contiguous beta-sheet run.
+            ``strand_id`` identifies that run. Downstream order checks compare
+            circular order at the strand level instead of the raw segment level.
         """
         aligned_coords = np.asarray(aligned_coords, dtype=float)
         if aligned_coords.ndim != 2 or aligned_coords.shape[1] != 3:
@@ -79,6 +103,7 @@ class ProteinSlicer:
             sheet_flags,
             max_hole_len=self.fill_sheet_hole_length,
         )
+        sheet_run_ids, sheet_run_seq_pos = self._assign_sheet_runs(sheet_flags)
 
         # 2) Determine the slice index range. Use integer k to avoid accumulating
         # floating-point error.
@@ -99,8 +124,12 @@ class ProteinSlicer:
         slices = defaultdict(list)
         # 3) Walk residue segments and compute intersections with each z-plane.
         for i in range(n - 1):
-            # Keep the segment if either endpoint belongs to a beta-sheet region.
-            if not (sheet_flags[i] or sheet_flags[i + 1]):
+            # Keep only segments that stay inside one contiguous beta-sheet run.
+            if not (sheet_flags[i] and sheet_flags[i + 1]):
+                continue
+
+            strand_id = int(sheet_run_ids[i])
+            if strand_id < 0 or strand_id != int(sheet_run_ids[i + 1]):
                 continue
 
             p1 = aligned_coords[i]
@@ -128,8 +157,7 @@ class ProteinSlicer:
                     continue
                 x = float(p1[0] + t * (p2[0] - p1[0]))
                 y = float(p1[1] + t * (p2[1] - p1[1]))
-                # Sequence position for intersection from segment (i, i+1).
-                seq_pos = float(i) + SEQUENCE_INTERSECTION_OFFSET
-                slices[z_plane].append((x, y, seq_pos))
+                seq_pos = float(sheet_run_seq_pos[strand_id])
+                slices[z_plane].append((x, y, seq_pos, float(strand_id)))
 
         return dict(sorted(slices.items()))

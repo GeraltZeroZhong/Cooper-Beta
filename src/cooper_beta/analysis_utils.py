@@ -24,6 +24,71 @@ def robust_center(points_xy: np.ndarray) -> tuple[float, float]:
     return float(center[0]), float(center[1])
 
 
+def radial_inlier_subset(
+    points_xy: np.ndarray,
+    *,
+    minimum_points: int,
+) -> tuple[np.ndarray, np.ndarray, float, float] | None:
+    """
+    Filter radial outliers and return the filtered points with a recentered origin.
+
+    The initial center is used only to identify gross radial outliers. Once those
+    points are removed, the center is recomputed on the retained subset so filtered
+    points do not keep biasing downstream angular statistics.
+    """
+    pts = np.asarray(points_xy, dtype=float)
+    if pts.ndim != 2 or pts.shape[0] < minimum_points:
+        return None
+
+    initial_center_x, initial_center_y = robust_center(pts)
+    delta_x = pts[:, 0] - initial_center_x
+    delta_y = pts[:, 1] - initial_center_y
+    radius = np.sqrt(delta_x * delta_x + delta_y * delta_y)
+
+    median_radius = float(np.median(radius))
+    mad_radius = float(np.median(np.abs(radius - median_radius)))
+    radius_sigma = float(ROBUST_SIGMA_SCALE * mad_radius)
+
+    if radius_sigma > TOLERANCE:
+        keep_mask = np.abs(radius - median_radius) <= (THREE_SIGMA_MULTIPLIER * radius_sigma)
+        filtered_points = pts[keep_mask]
+    else:
+        keep_mask = np.ones(pts.shape[0], dtype=bool)
+        filtered_points = pts
+
+    if filtered_points.shape[0] < minimum_points:
+        return None
+
+    center_x, center_y = robust_center(filtered_points)
+    return filtered_points, keep_mask, center_x, center_y
+
+
+def collapse_points_by_strand(points: np.ndarray) -> np.ndarray:
+    """
+    Collapse multiple same-strand intersections within one slice to one point.
+
+    When a strand contributes more than one segment-plane intersection, we compare
+    barrel order at the strand level instead of the raw segment level. This keeps
+    ``seq_order`` closer to the scientific notion of strand order around the barrel.
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] < 4:
+        return pts
+
+    strand_ids = pts[:, 3].astype(int)
+    unique_strands = np.unique(strand_ids)
+    if unique_strands.size == pts.shape[0]:
+        return pts
+
+    collapsed = np.empty((unique_strands.size, 4), dtype=float)
+    for index, strand_id in enumerate(unique_strands):
+        strand_points = pts[strand_ids == strand_id]
+        collapsed[index, :2] = np.mean(strand_points[:, :2], axis=0)
+        collapsed[index, 2] = float(np.median(strand_points[:, 2]))
+        collapsed[index, 3] = float(strand_id)
+    return collapsed
+
+
 def nearest_neighbor_spacing_stats(
     points_xy: np.ndarray,
 ) -> tuple[float, float, float, float] | None:
@@ -59,27 +124,10 @@ def angular_gap_stats(
     points_xy: np.ndarray,
 ) -> tuple[float, float, int, float, float] | None:
     """Return max angular gap, coverage, used count, and center coordinates."""
-    pts = np.asarray(points_xy, dtype=float)
-    if pts.ndim != 2 or pts.shape[0] < MIN_ANGULAR_GAP_POINTS:
+    filtered = radial_inlier_subset(points_xy, minimum_points=MIN_ANGULAR_GAP_POINTS)
+    if filtered is None:
         return None
-
-    center_x, center_y = robust_center(pts)
-    delta_x = pts[:, 0] - center_x
-    delta_y = pts[:, 1] - center_y
-    radius = np.sqrt(delta_x * delta_x + delta_y * delta_y)
-
-    median_radius = float(np.median(radius))
-    mad_radius = float(np.median(np.abs(radius - median_radius)))
-    radius_sigma = float(ROBUST_SIGMA_SCALE * mad_radius)
-
-    if radius_sigma > TOLERANCE:
-        keep_mask = np.abs(radius - median_radius) <= (THREE_SIGMA_MULTIPLIER * radius_sigma)
-        filtered_points = pts[keep_mask]
-    else:
-        filtered_points = pts
-
-    if filtered_points.shape[0] < MIN_ANGULAR_GAP_POINTS:
-        return None
+    filtered_points, _, center_x, center_y = filtered
 
     filtered_dx = filtered_points[:, 0] - center_x
     filtered_dy = filtered_points[:, 1] - center_y
@@ -131,7 +179,9 @@ def sequence_angle_order_stats(
     order_config: AngleOrderRuleConfig,
 ) -> dict[str, float | int] | None:
     """Compute sequence-order versus angle-order consistency on one slice."""
-    pts = np.asarray(points, dtype=float)
+    pts = collapse_points_by_strand(np.asarray(points, dtype=float))
+    if pts.ndim == 2 and pts.shape[1] >= 4:
+        pts = pts[:, :3]
     if (
         pts.ndim != 2
         or pts.shape[0] < MIN_SEQUENCE_ANGLE_ORDER_POINTS
@@ -139,34 +189,19 @@ def sequence_angle_order_stats(
     ):
         return None
 
-    xy = pts[:, :2]
-    sequence_position = pts[:, 2]
-
-    center_x, center_y = robust_center(xy)
-    delta_x = xy[:, 0] - center_x
-    delta_y = xy[:, 1] - center_y
-    radius = np.sqrt(delta_x * delta_x + delta_y * delta_y)
-
-    median_radius = float(np.median(radius))
-    mad_radius = float(np.median(np.abs(radius - median_radius)))
-    radius_sigma = float(ROBUST_SIGMA_SCALE * mad_radius)
-    if radius_sigma > TOLERANCE:
-        keep_mask = np.abs(radius - median_radius) <= (THREE_SIGMA_MULTIPLIER * radius_sigma)
-    else:
-        keep_mask = np.ones_like(radius, dtype=bool)
-
-    if int(np.sum(keep_mask)) < MIN_SEQUENCE_ANGLE_ORDER_POINTS:
+    filtered = radial_inlier_subset(pts[:, :2], minimum_points=MIN_SEQUENCE_ANGLE_ORDER_POINTS)
+    if filtered is None:
         return None
+    filtered_xy, keep_mask, center_x, center_y = filtered
 
-    filtered_xy = xy[keep_mask]
-    filtered_sequence_position = sequence_position[keep_mask]
+    filtered_sequence_position = pts[keep_mask, 2]
     count = int(filtered_xy.shape[0])
 
-    sequence_order = np.argsort(filtered_sequence_position)
+    sequence_order = np.argsort(filtered_sequence_position, kind="mergesort")
     filtered_dx = filtered_xy[:, 0] - center_x
     filtered_dy = filtered_xy[:, 1] - center_y
     angle = (np.arctan2(filtered_dy, filtered_dx) * RAD_TO_DEG) % FULL_ROTATION_DEG
-    angle_order = np.argsort(angle)
+    angle_order = np.argsort(angle, kind="mergesort")
 
     position_in_angle_order = np.empty(count, dtype=int)
     position_in_angle_order[angle_order] = np.arange(count, dtype=int)

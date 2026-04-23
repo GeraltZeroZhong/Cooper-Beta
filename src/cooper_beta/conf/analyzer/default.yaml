@@ -28,3 +28,5 @@ rules:
       local_step_max: 1
       min_local_frac: 1.0
       max_mean_circ_dist_norm: 0.0
+  sequence_core:
+    enabled: true
