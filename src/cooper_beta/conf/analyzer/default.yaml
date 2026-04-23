@@ -29,7 +29,7 @@ rules:
     fail_as_junk: true
   angle:
     enabled: true
-    max_gap_deg: 100.0
+    max_gap_deg: 120.0
     fail_as_junk: false
     order:
       enabled: true
