@@ -11,6 +11,7 @@ except Exception:
     pd = None
 
 from cooper_beta import pipeline
+from cooper_beta.constants import LEGACY_RESULT_SKIP, RESULT_FILTERED_OUT
 
 from .metrics import (
     compute_chain_metrics,
@@ -18,6 +19,10 @@ from .metrics import (
     ensure_columns,
     print_metrics,
 )
+
+
+def _is_filtered_result(result_series: pd.Series) -> pd.Series:
+    return result_series.isin({RESULT_FILTERED_OUT, LEGACY_RESULT_SKIP})
 
 
 def run_detector(
@@ -68,11 +73,16 @@ def save_outputs(
         decorated["split"] = split
         result_series = decorated["result"].astype(str).str.upper()
         decorated["is_error"] = result_series.eq("ERROR")
-        decorated["is_skip"] = result_series.eq("SKIP")
+        decorated["is_filtered_out"] = _is_filtered_result(result_series)
+        decorated["is_skip"] = decorated["is_filtered_out"]
         decorated["pred_barrel"] = result_series.eq("BARREL")
         decorated["use_for_metrics"] = ~decorated["is_error"]
         decorated["sample_id"] = (
             decorated["filename"].astype(str) + ":" + decorated["chain"].astype(str)
+        )
+        decorated["decision_score"] = (
+            pd.to_numeric(decorated["decision_score"], errors="coerce")
+            .fillna(pd.to_numeric(decorated["score_adjust"], errors="coerce").fillna(0.0))
         )
         decorated["score_adjust"] = (
             pd.to_numeric(decorated["score_adjust"], errors="coerce").fillna(0.0)
@@ -88,8 +98,10 @@ def save_outputs(
 
     no_error = combined[combined["use_for_metrics"]].copy()
     aggregated = no_error.groupby(["split", "y_true", "filename"], as_index=False).agg(
+        decision_score_max=("decision_score", "max"),
         score_adjust_max=("score_adjust", "max"),
         pred_barrel_any=("pred_barrel", "max"),
+        any_filtered_out=("is_filtered_out", "max"),
         any_skip=("is_skip", "max"),
         chains_n=("sample_id", "count"),
     )
@@ -150,10 +162,10 @@ def evaluate(
         if print_metric_tables:
             print_metrics("=== File-level ===", file_metrics)
             print("Breakdown (file-level):")
-            print(f"  true:  any_SKIP={file_extra['true_any_skip']}")
-            print(f"  false: any_SKIP={file_extra['false_any_skip']}\n")
+            print(f"  true:  any_FILTERED_OUT={file_extra['true_any_filtered_out']}")
+            print(f"  false: any_FILTERED_OUT={file_extra['false_any_filtered_out']}\n")
             print("Note:")
             print("  File-level metric uses discrete prediction pred_barrel_any (any chain == BARREL).")
-            print("  For ROC/PR at file-level, use 'score_adjust_max' in the saved file CSV.\n")
+            print("  For ROC/PR at file-level, use 'decision_score_max' in the saved file CSV.\n")
 
     return row
