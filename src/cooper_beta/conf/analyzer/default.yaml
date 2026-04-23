@@ -12,10 +12,11 @@ fit:
     loss: soft_l1
     f_scale: 1.0
 decision:
-  barrel_valid_ratio: 0.23
+  barrel_valid_ratio: 0.529
   use_adjusted_score: true
   min_intersections_for_scoring: 7
   min_scored_layer_frac: 0.04
+  min_scored_layers: 9
 axis_search:
   enabled: true
   refine:

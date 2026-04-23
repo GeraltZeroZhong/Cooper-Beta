@@ -71,10 +71,11 @@ class EllipseFitConfig:
 
 @dataclass
 class DecisionConfig:
-    barrel_valid_ratio: float = 0.5
+    barrel_valid_ratio: float = 0.529
     use_adjusted_score: bool = True
     min_intersections_for_scoring: int = 7
     min_scored_layer_frac: float = 0.20
+    min_scored_layers: int = 9
 
 
 @dataclass
@@ -159,6 +160,7 @@ LEGACY_OVERRIDE_PATHS = {
     "MIN_INTERSECTIONS_FOR_SCORING": "analyzer.decision.min_intersections_for_scoring",
     "USE_ADJUSTED_SCORE": "analyzer.decision.use_adjusted_score",
     "MIN_SCORED_LAYER_FRAC": "analyzer.decision.min_scored_layer_frac",
+    "MIN_SCORED_LAYERS": "analyzer.decision.min_scored_layers",
     "AXIS_SEARCH_ENABLED": "analyzer.axis_search.enabled",
     "AXIS_SEARCH_REFINE_ENABLED": "analyzer.axis_search.refine.enabled",
     "AXIS_SEARCH_REFINE_ANGLE_DEG": "analyzer.axis_search.refine.angle_deg",

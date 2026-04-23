@@ -8,7 +8,7 @@ import pytest
 
 import cooper_beta.pipeline_workers as pipeline_workers
 from cooper_beta.config import AppConfig
-from cooper_beta.constants import RESULT_BARREL, RESULT_FILTERED_OUT
+from cooper_beta.constants import RESULT_BARREL, RESULT_FILTERED_OUT, RESULT_NON_BARREL
 
 
 def _residue(x: float, y: float, z: float, *, is_sheet: bool) -> dict[str, object]:
@@ -120,6 +120,7 @@ def test_analyze_chain_payload_reports_decision_metrics(monkeypatch: pytest.Monk
     cfg.input.min_sheet_residues = 2
     cfg.input.min_informative_slices = 4
     cfg.analyzer.decision.barrel_valid_ratio = 0.60
+    cfg.analyzer.decision.min_scored_layers = 0
 
     payload = {
         "filename": "example.pdb",
@@ -169,6 +170,44 @@ def test_analyze_chain_payload_reports_decision_metrics(monkeypatch: pytest.Monk
     assert row["informative_slices"] == 4
     assert row["all_adjusted_layers"] == 4
     assert row["all_layers"] == 4
+
+
+def test_analyze_chain_payload_requires_minimum_scored_layers(monkeypatch: pytest.MonkeyPatch):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 4
+    cfg.input.min_sheet_residues = 2
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.60
+    cfg.analyzer.decision.min_scored_layers = 5
+
+    payload = {
+        "filename": "example.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(0.0, 0.0, 0.0, is_sheet=True),
+            _residue(1.0, 0.0, 1.0, is_sheet=True),
+            _residue(2.0, 0.0, 2.0, is_sheet=True),
+            _residue(3.0, 0.0, 3.0, is_sheet=False),
+        ],
+    }
+    report = {
+        "score": 0.50,
+        "score_adjust": 0.75,
+        "valid_layers": 3,
+        "total_layers": 4,
+        "total_scored_layers": 4,
+        "layer_details": [{"reason": "OK"} for _ in range(4)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=4)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_NON_BARREL
+    assert row["decision_score"] == pytest.approx(0.75)
+    assert row["reason"] == (
+        "Too few scored slices for a stable decision "
+        "(4/4 = 1.00, need > 0.20 and >= 5 layers)"
+    )
 
 
 def test_analyze_chain_payload_uses_raw_score_when_configured(monkeypatch: pytest.MonkeyPatch):
