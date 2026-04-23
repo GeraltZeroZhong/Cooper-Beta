@@ -9,10 +9,10 @@ fit:
     loss: soft_l1
     f_scale: 1.0
 decision:
-  barrel_valid_ratio: 0.5
+  barrel_valid_ratio: 0.45
   use_adjusted_score: true
   min_intersections_for_scoring: 7
-  min_scored_layer_frac: 0.2
+  min_scored_layer_frac: 0.15
 rules:
   nearest_neighbor:
     enabled: true
@@ -21,7 +21,7 @@ rules:
     fail_as_junk: true
   angle:
     enabled: true
-    max_gap_deg: 80.0
+    max_gap_deg: 100.0
     fail_as_junk: false
     order:
       enabled: true
