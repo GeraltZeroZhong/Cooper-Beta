@@ -11,6 +11,7 @@ from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
 from .config import AppConfig
 from .loader import ProteinLoader
+from .prepare_cache import load_prepare_payloads, store_prepare_payloads
 from .slicer import ProteinSlicer
 
 try:
@@ -136,6 +137,10 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
     """
     filename = os.path.basename(file_path)
     try:
+        cached_payloads = load_prepare_payloads(file_path, cfg)
+        if cached_payloads is not None:
+            return cached_payloads
+
         loader = ProteinLoader(
             file_path,
             dssp_bin=cfg.runtime.dssp_bin_path,
@@ -161,6 +166,8 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
                 "residues_data": residues_data,
             }
         )
+
+    store_prepare_payloads(file_path, cfg, payloads)
     return payloads
 
 

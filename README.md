@@ -9,8 +9,8 @@ whether each chain is classified as a beta-barrel.
 ## Features
 - Supports PDB, CIF, and mmCIF inputs (single file or directory).
 - Parallel preparation (DSSP/structure parsing) and analysis phases.
-- Robust beta-barrel scoring with adjustable rules (nearest-neighbor spacing, angular coverage,
-  and sequence/angle order consistency).
+- Fast OpenCV-direct ellipse fitting plus adjustable geometric rules (nearest-neighbor spacing,
+  angular coverage, and sequence/angle order consistency).
 - CSV output with per-chain classification metrics and failure reasons.
 - CLI and module entry points (`cooper-beta`, `python -m cooper_beta`).
 
@@ -18,7 +18,7 @@ whether each chain is classified as a beta-barrel.
 ### Requirements
 - Python 3.10+
 - DSSP binary (`mkdssp` or `dssp`) available on your PATH
-- Core dependencies: NumPy, SciPy, Biopython
+- Core dependencies: NumPy, SciPy, Biopython, OpenCV (headless)
 - Optional: pandas and tqdm for richer summaries/progress output
 
 `pip` can install Python packages, but it cannot install system binaries such as
@@ -89,6 +89,8 @@ python main.py data/ 8 4
 Configuration is now managed by Hydra YAML files under `src/cooper_beta/conf/`.
 The default root config composes:
 - `runtime`: worker counts, DSSP path, strict DSSP behavior.
+  It also controls the on-disk prepare cache used to reuse structure parsing and
+  DSSP output across repeated runs.
 - `input`: input path, accepted suffixes, chain/sheet/slice prefilters.
 - `slicer`: slice thickness and short-hole filling.
 - `analyzer`: ellipse-fit thresholds, decision thresholds, nearest-neighbor rule,
@@ -101,6 +103,12 @@ Examples:
 # Point to a custom DSSP binary
 cooper-beta runtime.dssp_bin_path=/opt/dssp/bin/mkdssp
 
+# Disable the prepare cache for one run
+cooper-beta runtime.prepare_cache_enabled=false
+
+# Put the prepare cache in a custom directory
+cooper-beta runtime.prepare_cache_dir=/tmp/cooper-beta-cache
+
 # Tune geometric thresholds
 cooper-beta analyzer.fit.max_rmse=2.5 analyzer.rules.angle.max_gap_deg=70
 
@@ -110,6 +118,13 @@ cooper-beta analyzer.rules.nearest_neighbor.enabled=false
 
 The legacy flat `Config` class still exists for backward compatibility in Python
 code, but the supported configuration surface is now Hydra.
+
+By default, Cooper-Beta derives both worker counts from the visible CPU set
+(`os.sched_getaffinity()` when available) and keeps one core in reserve via
+`runtime.cpu_reserve`. On this workstation, that resolves to `7` workers for
+both preparation and analysis. Prepare results are cached on disk by default
+under `~/.cache/cooper-beta/prepare` unless `XDG_CACHE_HOME` or
+`runtime.prepare_cache_dir` overrides that location.
 
 ## Folder Structure
 ```
