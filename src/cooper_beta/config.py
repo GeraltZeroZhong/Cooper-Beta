@@ -27,6 +27,8 @@ class RuntimeConfig:
     cpu_reserve: int = 1
     dssp_bin_path: str | None = None
     fail_on_dssp_error: bool = True
+    prepare_cache_enabled: bool = True
+    prepare_cache_dir: str | None = None
     check_env: bool = False
 
 
@@ -129,6 +131,8 @@ class AppConfig:
 
 LEGACY_OVERRIDE_PATHS = {
     "DSSP_BIN_PATH": "runtime.dssp_bin_path",
+    "PREPARE_CACHE_ENABLED": "runtime.prepare_cache_enabled",
+    "PREPARE_CACHE_DIR": "runtime.prepare_cache_dir",
     "SLICE_STEP_SIZE": "slicer.step_size",
     "MIN_POINTS_PER_SLICE": "analyzer.fit.min_points_per_slice",
     "MAX_FIT_RMSE": "analyzer.fit.max_rmse",

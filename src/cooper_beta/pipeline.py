@@ -15,24 +15,33 @@ def discover_input_files(input_path: str, allowed_suffixes: list[str]) -> list[s
     if path.is_dir():
         files: list[Path] = []
         for suffix in allowed_suffixes:
-            files.extend(path.glob(f"*{suffix}"))
+            files.extend(path.rglob(f"*{suffix}"))
         return [str(file_path) for file_path in sorted(files)]
     return [str(path)]
-
-
-def resolve_worker_count(configured_workers: int | None, cpu_reserve: int) -> int:
-    """Choose a sensible default worker count from available CPUs."""
-    if configured_workers is not None:
-        return max(1, int(configured_workers))
-
-    cpu_count = os_cpu_count()
-    return max(1, cpu_count - max(0, cpu_reserve))
 
 
 def os_cpu_count() -> int:
     import os
 
+    affinity = getattr(os, "sched_getaffinity", None)
+    if affinity is not None:
+        return max(1, len(affinity(0)))
     return os.cpu_count() or 1
+
+
+def resolve_analysis_worker_count(configured_workers: int | None, cpu_reserve: int) -> int:
+    """Choose a sensible default analysis worker count from available CPUs."""
+    if configured_workers is not None:
+        return max(1, int(configured_workers))
+
+    available_cpus = os_cpu_count()
+    return max(1, available_cpus - max(0, cpu_reserve))
+
+
+def resolve_prepare_worker_count(configured_workers: int | None, analysis_workers: int) -> int:
+    if configured_workers is not None:
+        return max(1, int(configured_workers))
+    return max(1, analysis_workers)
 
 
 def apply_runtime_overrides(
@@ -66,11 +75,8 @@ def run_pipeline(cfg: AppConfig) -> list[dict[str, object]]:
 
     require_dssp_binary(cfg.runtime.dssp_bin_path)
 
-    analysis_workers = resolve_worker_count(cfg.runtime.workers, cfg.runtime.cpu_reserve)
-    prepare_workers = cfg.runtime.prepare_workers
-    if prepare_workers is None:
-        prepare_workers = analysis_workers
-    prepare_workers = max(1, int(prepare_workers))
+    analysis_workers = resolve_analysis_worker_count(cfg.runtime.workers, cfg.runtime.cpu_reserve)
+    prepare_workers = resolve_prepare_worker_count(cfg.runtime.prepare_workers, analysis_workers)
 
     payloads = collect_payloads(files, cfg, prepare_workers)
     if not payloads:

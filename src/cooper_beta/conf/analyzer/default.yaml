@@ -5,6 +5,9 @@ fit:
   max_axis: 199.0
   max_flattening: 3.5
   least_squares:
+    # OpenCV's fitEllipseDirect() is now the default fitter.
+    # Keep these legacy keys for backward-compatible config parsing; only
+    # `f_scale` still affects the residual-derived inlier band.
     method: trf
     loss: soft_l1
     f_scale: 1.0

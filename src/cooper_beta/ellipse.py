@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from math import pi
 
+import cv2
 import numpy as np
-from scipy.optimize import least_squares
 
 from .config import LeastSquaresConfig
 from .constants import COVARIANCE_FLOOR, ROBUST_SIGMA_SCALE
@@ -17,16 +17,6 @@ _NEWTON_STEP_CLIP = 0.5
 def _wrap_angle(theta: float) -> float:
     """Wrap an angle to ``[-pi, pi)`` for stable reporting."""
     return float((theta + pi) % (2.0 * pi) - pi)
-
-
-def _decode_params(raw_params: np.ndarray) -> tuple[float, float, float, float, float]:
-    """Decode unconstrained parameters into a positive-axis ellipse."""
-    center_x = float(raw_params[0])
-    center_y = float(raw_params[1])
-    axis_a = float(np.exp(np.clip(raw_params[2], -20.0, 20.0)))
-    axis_b = float(np.exp(np.clip(raw_params[3], -20.0, 20.0)))
-    theta = float(raw_params[4])
-    return center_x, center_y, axis_a, axis_b, theta
 
 
 def _canonicalize_ellipse(
@@ -142,12 +132,14 @@ def signed_geometric_distances(
     return distances
 
 
-def _geometric_residuals(raw_params: np.ndarray, points_xy: np.ndarray) -> np.ndarray:
-    return signed_geometric_distances(points_xy, _decode_params(raw_params))
+def _trim_points_for_direct_fit(points_xy: np.ndarray) -> np.ndarray:
+    """
+    Keep a robust core before the direct fit.
 
-
-def _initial_guess(points_xy: np.ndarray) -> np.ndarray:
-    """Build a robust ellipse initialization from trimmed second moments."""
+    `fitEllipseDirect()` is much faster than iterative geometric fitting, but it
+    is also more sensitive to obvious outliers. We therefore keep the lightweight
+    radial trimming that previously fed the nonlinear initializer.
+    """
     pts = np.asarray(points_xy, dtype=float)
     median_center = np.median(pts, axis=0)
     radial_distance = np.sqrt(np.sum((pts - median_center) ** 2, axis=1))
@@ -164,44 +156,22 @@ def _initial_guess(points_xy: np.ndarray) -> np.ndarray:
     else:
         trimmed = pts
 
-    center_x, center_y = np.mean(trimmed, axis=0)
-    centered = trimmed - np.array([center_x, center_y], dtype=float)
-
-    covariance = np.cov(centered.T)
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    major_vector = eigenvectors[:, 1]
-    theta = float(np.arctan2(major_vector[1], major_vector[0]))
-
-    axis_a = float(np.sqrt(max(2.0 * eigenvalues[1], COVARIANCE_FLOOR)))
-    axis_b = float(np.sqrt(max(2.0 * eigenvalues[0], COVARIANCE_FLOOR)))
-    axis_a = max(axis_a, np.sqrt(COVARIANCE_FLOOR))
-    axis_b = max(axis_b, np.sqrt(COVARIANCE_FLOOR))
-    return np.array(
-        [center_x, center_y, np.log(axis_a), np.log(axis_b), theta],
-        dtype=float,
-    )
+    return np.ascontiguousarray(trimmed, dtype=np.float32)
 
 
-def _fit_once(
-    points_xy: np.ndarray,
-    initial_guess: np.ndarray,
-    least_squares_config: LeastSquaresConfig,
-) -> np.ndarray | None:
+def _fit_once(points_xy: np.ndarray) -> tuple[float, float, float, float, float] | None:
+    cv_points = np.asarray(points_xy, dtype=np.float32).reshape(-1, 1, 2)
     try:
-        result = least_squares(
-            _geometric_residuals,
-            np.asarray(initial_guess, dtype=float),
-            args=(np.asarray(points_xy, dtype=float),),
-            method=least_squares_config.method,
-            loss=least_squares_config.loss,
-            f_scale=float(least_squares_config.f_scale),
-        )
-    except Exception:
+        (center_x, center_y), (width, height), angle_deg = cv2.fitEllipseDirect(cv_points)
+    except cv2.error:
         return None
 
-    if not result.success:
+    axis_a = 0.5 * float(width)
+    axis_b = 0.5 * float(height)
+    if axis_a <= 0.0 or axis_b <= 0.0:
         return None
-    return np.asarray(result.x, dtype=float)
+    theta = float(np.deg2rad(angle_deg))
+    return _canonicalize_ellipse(center_x, center_y, axis_a, axis_b, theta)
 
 
 def _distance_threshold(distances: np.ndarray, least_squares_config: LeastSquaresConfig) -> float:
@@ -224,12 +194,12 @@ def fit_rotated_ellipse(
     least_squares_config: LeastSquaresConfig,
 ) -> dict[str, float] | None:
     """
-    Fit a rotated ellipse using robust geometric distances.
+    Fit a rotated ellipse using `cv2.fitEllipseDirect()`.
 
-    The returned ``rmse`` is the RMSE of signed point-to-ellipse distances across
-    all retained core points, so it is expressed in the same units as the input
-    coordinates. ``inlier_frac`` is kept only as a soft diagnostic derived from
-    the final residual distribution; it is not used to refit the ellipse.
+    OpenCV's direct least-squares fit is non-iterative and much faster than the
+    previous nonlinear geometric solver. We still compute the downstream
+    geometric diagnostics once on the final ellipse so the rest of the analyzer
+    can keep using RMSE/inlier-based thresholds unchanged.
     """
     pts = np.asarray(points_xy, dtype=float)
     if pts.ndim != 2 or pts.shape[1] != 2:
@@ -237,12 +207,10 @@ def fit_rotated_ellipse(
     if pts.shape[0] < 5:
         return None
 
-    initial_guess = _initial_guess(pts)
-    raw_params = _fit_once(pts, initial_guess, least_squares_config)
-    if raw_params is None:
+    fit_points = _trim_points_for_direct_fit(pts)
+    params = _fit_once(fit_points)
+    if params is None:
         return None
-
-    params = _canonicalize_ellipse(*_decode_params(raw_params))
 
     all_distances = signed_geometric_distances(pts, params)
     rmse = float(np.sqrt(np.mean(all_distances**2))) if all_distances.size else float("inf")
