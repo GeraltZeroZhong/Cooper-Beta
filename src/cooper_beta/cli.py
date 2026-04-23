@@ -18,38 +18,38 @@ from .runtime import runtime_summary
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         prog="cooper-beta",
-        description="Detect beta-barrel-like chains from PDB/mmCIF files and write a CSV summary.",
+        description="Detect beta-barrel-like protein chains from PDB/mmCIF inputs and write a CSV summary.",
     )
     ap.add_argument(
         "path",
         nargs="?",
         default="data/",
-        help="输入路径：单个文件，或包含 .pdb/.cif/.mmcif 的目录（默认：data/）",
+        help="Input path: a single structure file, or a directory containing .pdb/.cif/.mmcif files (default: data/).",
     )
     ap.add_argument(
         "--workers",
         "-w",
         type=int,
         default=None,
-        help="分析阶段进程数（默认：CPU-1 或 1）",
+        help="Number of analysis workers (default: CPU count minus one, with a minimum of one).",
     )
     ap.add_argument(
         "--prepare-workers",
         "--prep",
         type=int,
         default=None,
-        help="准备阶段进程数（DSSP/解析，默认：与 --workers 相同）",
+        help="Number of preparation workers for DSSP/parsing (default: same as --workers).",
     )
     ap.add_argument(
         "--out",
         "-o",
         default="cooper_beta_results.csv",
-        help="输出 CSV 路径（默认：cooper_beta_results.csv）",
+        help="Output CSV path (default: cooper_beta_results.csv).",
     )
     ap.add_argument(
         "--check-env",
         action="store_true",
-        help="只检查 Python 与 DSSP 是否可用，然后退出",
+        help="Check whether Python and DSSP are available, then exit.",
     )
     args = ap.parse_args(argv)
 

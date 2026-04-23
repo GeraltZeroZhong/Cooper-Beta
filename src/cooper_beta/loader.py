@@ -26,7 +26,10 @@ _TWO_LETTER_ELEMENTS = {
 
 def _infer_element_from_atom_name(atom_name: str) -> str:
     """
-    从 PDB atom name 推断元素符号。返回 Biopython 常见格式：如 'C', 'N', 'O', 'Cl', 'Zn' 等。
+    Infer an element symbol from a PDB atom name.
+
+    Returns Biopython-style capitalization such as ``C``, ``N``, ``O``, ``Cl``,
+    or ``Zn``.
     """
     if not atom_name:
         return ""
@@ -34,11 +37,11 @@ def _infer_element_from_atom_name(atom_name: str) -> str:
     if not s:
         return ""
 
-    # 若形如 "1HG1"：去掉前导数字
+    # Strip a leading digit from names such as "1HG1".
     if s[0].isdigit() and len(s) >= 2:
         s = s[1:]
 
-    # 提取字母部分
+    # Keep alphabetic characters only.
     s = re.sub(r"[^A-Za-z]", "", s)
     if not s:
         return ""
@@ -50,7 +53,7 @@ def _infer_element_from_atom_name(atom_name: str) -> str:
 
 
 def _fill_missing_atom_elements(model) -> int:
-    """补全 atom.element 为空或 'X' 的原子；返回修复数量。"""
+    """Fill empty or placeholder ``atom.element`` values and return the count."""
     fixed = 0
     for atom in model.get_atoms():
         elem = (getattr(atom, "element", "") or "").strip()
@@ -65,8 +68,10 @@ def _fill_missing_atom_elements(model) -> int:
 
 def _sanitize_blank_chain_ids(model) -> int:
     """
-    将 chain.id 为空/空格的链改成合法单字符，避免 mkdssp/gemmi 在 nonpoly 校验中失败。
-    返回修复链数量。
+    Replace blank chain IDs with valid single-character IDs.
+
+    This avoids mkdssp/gemmi failures during non-polymer validation.
+    Returns the number of chains updated.
     """
     used = set()
     chains = list(model.get_chains())
@@ -93,10 +98,13 @@ def _sanitize_blank_chain_ids(model) -> int:
 # -------------------------
 def _strip_remark_350_to_temp_pdb(in_path: str) -> str:
     """
-    某些 PDB 会触发 Biopython parse_pdb_header 的 currentBiomolecule bug。
-    即便 get_header=False，某些版本/路径仍可能触发。
-    兜底：去掉 REMARK 350 块后重新解析。
-    返回临时文件路径（调用方负责删除）。
+    Work around a Biopython ``parse_pdb_header`` bug triggered by some PDBs.
+
+    Even with ``get_header=False``, some versions or code paths still hit the
+    ``currentBiomolecule`` bug. As a fallback, drop ``REMARK 350`` records and
+    parse the structure again.
+
+    Returns the temporary file path; the caller is responsible for deleting it.
     """
     fd, out_path = tempfile.mkstemp(suffix=".pdb")
     with open(in_path, "r", errors="ignore") as fin, os.fdopen(fd, "w") as fout:
@@ -111,7 +119,7 @@ def _strip_remark_350_to_temp_pdb(in_path: str) -> str:
 # DSSP: export protein only
 # -------------------------
 class _ProteinOnlySelect(Select):
-    """只导出氨基酸残基（包括 MSE 等非标准氨基酸）的 ATOM。"""
+    """Export only amino-acid residues, including non-standard residues like MSE."""
     def accept_residue(self, residue):
         return 1 if is_aa(residue, standard=False) else 0
 
@@ -124,7 +132,7 @@ class _ProteinOnlySelect(Select):
 # -------------------------
 class ProteinLoader:
     """
-    加载 PDB/MMCIF，运行 DSSP，按链提取 CA 坐标及是否为 beta-sheet。
+    Load PDB/mmCIF structures, run DSSP, and extract per-chain CA data.
     """
 
     def __init__(self, file_path, model_id=0, dssp_bin=None):
@@ -140,7 +148,7 @@ class ProteinLoader:
 
     def _load_structure(self):
         if not os.path.exists(self.file_path):
-            raise FileNotFoundError(f"文件未找到: {self.file_path}")
+            raise FileNotFoundError(f"Structure file not found: {self.file_path}")
 
         ext = os.path.splitext(self.file_path)[1].lower()
 
@@ -149,7 +157,7 @@ class ProteinLoader:
                 parser = MMCIFParser(QUIET=True)
                 self.structure = parser.get_structure("struct", self.file_path)
             else:
-                # 核心：关闭 header 解析
+                # Important: disable header parsing.
                 parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
                 self.structure = parser.get_structure("struct", self.file_path)
 
@@ -157,7 +165,7 @@ class ProteinLoader:
             return
 
         except Exception as e:
-            # 兜底：只对 PDB 走 REMARK 350 剔除回退
+            # Fallback: only PDB files go through the REMARK 350 stripping path.
             if ext not in [".cif", ".mmcif"]:
                 tmp = None
                 try:
@@ -167,7 +175,7 @@ class ProteinLoader:
                     self.model = self.structure[self.model_id]
                     return
                 except Exception as e2:
-                    raise ValueError(f"结构解析失败 {self.file_path}: {str(e2)}") from None
+                    raise ValueError(f"Failed to parse structure {self.file_path}: {e2}") from None
                 finally:
                     if tmp and os.path.exists(tmp):
                         try:
@@ -175,7 +183,7 @@ class ProteinLoader:
                         except OSError:
                             pass
 
-            raise ValueError(f"结构解析失败 {self.file_path}: {str(e)}") from None
+            raise ValueError(f"Failed to parse structure {self.file_path}: {e}") from None
 
     def _run_dssp(self):
         if self.dssp is not None:
@@ -183,13 +191,14 @@ class ProteinLoader:
 
         dssp_bin = require_dssp_binary(self.dssp_bin)
 
-        # DSSP 前处理（对 mkdssp/gemmi 严格解析最关键）
+        # Preprocess before DSSP; this is important for mkdssp/gemmi's stricter parser.
         _sanitize_blank_chain_ids(self.model)
         _fill_missing_atom_elements(self.model)
 
         tmp_path = None
         try:
-            # 只导出蛋白 ATOM，剔除 HETATM，避免 nonpoly_scheme strand/duplicate key 问题
+            # Export protein ATOM records only. Dropping HETATM helps avoid
+            # nonpoly_scheme strand/duplicate key issues.
             fd, tmp_path = tempfile.mkstemp(suffix=".pdb")
             with os.fdopen(fd, "w") as handle:
                 handle.write("HEADER    GENERATED BY LOADER                         \n")
@@ -200,7 +209,7 @@ class ProteinLoader:
             self.dssp = DSSP(self.model, tmp_path, dssp=dssp_bin)
 
         except Exception as e:
-            print(f"  [Warn] DSSP 失败 ({os.path.basename(self.file_path)}): {e}")
+            print(f"  [Warning] DSSP failed for {os.path.basename(self.file_path)}: {e}")
             self.dssp = {}
 
         finally:

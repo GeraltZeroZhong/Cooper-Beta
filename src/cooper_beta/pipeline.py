@@ -16,7 +16,7 @@ import glob
 import csv
 import numpy as np
 
-# 进度条（可选依赖）。如果未安装 tqdm，会自动退化为普通迭代。
+# Optional progress bars. If tqdm is unavailable, fall back to plain iteration.
 try:
     from tqdm.auto import tqdm
     _tqdm_write = tqdm.write
@@ -71,14 +71,15 @@ from .runtime import require_dssp_binary
 
 def _analyze_chain_payload(payload):
     """
-    多进程 worker：分析单条链（payload 仅包含可序列化数据）。
-    返回结果字典（用于汇总/写 CSV）。
+    Multiprocessing worker that analyzes a single chain payload.
 
-    结果字段（保持干净）：
-      - score_adjust: 忽略 junk slices 的有效层占比
-      - valid_layers: score_adjust 分子（有效计分层数量）
-      - all_adjusted_layers: score_adjust 分母（计分层总数，已排除 junk）
-      - all_layers: 总切片层数（active layers）
+    Returns a summary dict used for console output and CSV writing.
+
+    Key result fields:
+      - score_adjust: fraction of valid scored slices after junk slices are excluded
+      - valid_layers: numerator of score_adjust
+      - all_adjusted_layers: denominator of score_adjust
+      - all_layers: total number of active slices
     """
     t0 = time.perf_counter()
 
@@ -105,17 +106,17 @@ def _analyze_chain_payload(payload):
             'reason': reason,
         }
 
-    # 基本过滤
+    # Basic prefilters.
     if (not residues_data) or num_ca < 20:
-        return _ret('SKIP', 'Chain too short')
+        return _ret('SKIP', 'Chain has fewer than 20 residues')
 
     all_coords = np.array([r['coord'] for r in residues_data], dtype=float)
     sheet_coords = np.array([r['coord'] for r in residues_data if r.get('is_sheet', False)], dtype=float)
 
     if sheet_coords.shape[0] < 10:
-        return _ret('SKIP', 'Not enough beta-sheets')
+        return _ret('SKIP', 'Not enough beta-sheet residues')
 
-    # 对齐
+    # Alignment.
     try:
         aligner = PCAAligner()
         aligner.fit(sheet_coords)
@@ -123,14 +124,14 @@ def _analyze_chain_payload(payload):
     except Exception:
         return _ret('ERROR', 'Alignment failed')
 
-    # 切片
+    # Slicing.
     slicer = ProteinSlicer(step_size=Config.SLICE_STEP_SIZE)
     slices = slicer.slice_structure(aligned_coords, residues_data)
 
     if len(slices) < 5:
-        return _ret('SKIP', 'Too few slices')
+        return _ret('SKIP', 'Too few informative slices')
 
-    # 分析
+    # Slice analysis.
     analyzer = BarrelAnalyzer(
         min_points=Config.MIN_POINTS_PER_SLICE,
         max_rmse=Config.MAX_FIT_RMSE,
@@ -158,21 +159,21 @@ def _analyze_chain_payload(payload):
     try:
         report = analyzer.analyze(slices)
     except Exception:
-        # 失败时，至少给出 all_layers（active layers）用于定位
+        # Preserve at least the active-slice count to aid debugging.
         fallback = {'total_layers': len([z for z in slices.keys() if len(slices[z]) > 0])}
-        return _ret('ERROR', 'Analyzer crashed', fallback)
+        return _ret('ERROR', 'Slice analyzer crashed unexpectedly', fallback)
 
-    # 判定分数（内部用，不输出）
+    # Internal decision score.
     score_raw = float(report.get('score', 0.0))
     score_adjust = float(report.get('score_adjust', 0.0))
     final_score = score_adjust if Config.USE_ADJUSTED_SCORE else score_raw
-    
-    # 额外控制条件：计分层数量必须足够（避免 all_adjusted_layers 太小导致误判）
+
+    # Stability gate: require enough scored slices to trust score_adjust.
     total_layers = int(report.get('total_layers', 0))
     total_scored_layers = int(report.get('total_scored_layers', 0))
 
-    # 仅当使用 score_adjust 时，才需要对“计分层数量”施加稳定性约束；
-    # baseline（USE_ADJUSTED_SCORE=False）时，分母采用 total_layers，因此不应被该门控影响。
+    # Only apply the stability gate when score_adjust is used. In the baseline
+    # mode, the denominator is total_layers, so this extra gate is unnecessary.
     if Config.USE_ADJUSTED_SCORE:
         enough_scored_layers = (total_layers > 0) and (
             total_scored_layers > total_layers * float(Config.MIN_SCORED_LAYER_FRAC)
@@ -182,7 +183,7 @@ def _analyze_chain_payload(payload):
 
     is_barrel = enough_scored_layers and (final_score >= Config.BARREL_VALID_RATIO)
 
-    # 聚合主失败原因（层级）
+    # Aggregate the most common slice-level failure reason.
     layer_details = report.get('layer_details', []) or []
     invalid_reasons = []
     junk_reasons = []
@@ -200,15 +201,15 @@ def _analyze_chain_payload(payload):
     elif junk_reasons:
         main_reason = Counter(junk_reasons).most_common(1)[0][0]
     else:
-        main_reason = 'Low score'
+        main_reason = 'Too few valid slices'
 
-    reason = 'OK' if is_barrel else ('Too few scored layers' if (not enough_scored_layers) else main_reason)
+    reason = 'OK' if is_barrel else ('Too few scored slices for a stable decision' if (not enough_scored_layers) else main_reason)
 
     return _ret('BARREL' if is_barrel else 'NON_BARREL', reason, report)
 
 def _prepare_one_file(file_path, dssp_bin_path=None):
     """
-    worker：解析单个文件并运行一次 DSSP，返回该文件的链 payload 列表。
+    Worker that parses one file, runs DSSP once, and returns per-chain payloads.
     """
     filename = os.path.basename(file_path)
     try:
@@ -228,14 +229,15 @@ def _prepare_one_file(file_path, dssp_bin_path=None):
 
 def _collect_payloads(files, prepare_workers=1):
     """
-    准备阶段：对每个文件只运行一次 DSSP/解析结构，提取每条链的 residues_data，生成 payload 列表。
+    Preparation phase: run DSSP/structure parsing once per file and extract
+    chain-level payloads.
 
-    - prepare_workers=1：单进程（最省资源，但慢）
-    - prepare_workers>1：多进程并行“按文件”跑 DSSP（更快，但更吃 CPU/IO）
+    - ``prepare_workers=1``: single-process mode, light on resources but slower
+    - ``prepare_workers>1``: per-file multiprocessing, faster but heavier on CPU/IO
     """
     payloads = []
 
-    # 单进程
+    # Single-process mode.
     if prepare_workers is None or prepare_workers <= 1:
         for file_path in tqdm(files, desc="Preparing", unit="file"):
             filename = os.path.basename(file_path)
@@ -254,7 +256,8 @@ def _collect_payloads(files, prepare_workers=1):
 
         return payloads
 
-    # 多进程：按文件并行（每个文件仍只跑一次 DSSP）
+    # Multi-process mode: parallelize by file while still running DSSP only once
+    # per structure file.
     prepare_workers = int(max(1, prepare_workers))
     with ProcessPoolExecutor(max_workers=prepare_workers) as ex:
         futs = [ex.submit(_prepare_one_file, fp, Config.DSSP_BIN_PATH) for fp in files]
@@ -265,12 +268,12 @@ def _collect_payloads(files, prepare_workers=1):
                 _tqdm_write(f"  [X] Prepare worker failed: {e}")
                 continue
 
-            # 错误回传
+            # Error payload returned by the worker.
             if isinstance(res, dict) and res.get('_error'):
                 _tqdm_write(f"  [X] Load failed: {res['_error']}")
                 continue
 
-            # 正常 payload list
+            # Normal payload list.
             if res:
                 payloads.extend(res)
 
@@ -282,7 +285,7 @@ def main(input_path, workers=None, prepare_workers=None, out_csv='cooper_beta_re
     if os.path.isdir(input_path):
         files = glob.glob(os.path.join(input_path, "*.pdb")) + glob.glob(os.path.join(input_path, "*.cif")) + glob.glob(os.path.join(input_path, "*.mmcif"))
         if not files:
-            print("未找到 .pdb/.cif/.mmcif 文件")
+            print(f"No .pdb/.cif/.mmcif files found in: {input_path}")
             return
     else:
         files = [input_path]
@@ -290,17 +293,17 @@ def main(input_path, workers=None, prepare_workers=None, out_csv='cooper_beta_re
     require_dssp_binary(Config.DSSP_BIN_PATH)
     payloads = _collect_payloads(files, prepare_workers=prepare_workers)
     if not payloads:
-        print("无可用任务")
+        print("No analyzable chain payloads were produced.")
         return
 
     if workers is None:
         cpu = os.cpu_count() or 1
         workers = max(1, cpu - 1)
 
-    print(f"\nRunning analysis with {workers} worker(s) 等")
+    print(f"\nRunning analysis with {workers} worker(s)...")
 
     results = []
-    # 进程池：多核加速（适用于 CPU-heavy 的拟合）
+    # Process pool for CPU-heavy fitting work.
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futs = [ex.submit(_analyze_chain_payload, p) for p in payloads]
         with tqdm(total=len(futs), desc="Analyzing", unit="chain") as pbar:
@@ -312,7 +315,7 @@ def main(input_path, workers=None, prepare_workers=None, out_csv='cooper_beta_re
                 finally:
                     pbar.update(1)
 
-    # 输出汇总
+    # Print and write the final summary.
     if pd is not None:
         df = pd.DataFrame(results)
         cols = [c for c in ['filename','chain','result','score_adjust','valid_layers','all_adjusted_layers','all_layers','reason'] if c in df.columns]
@@ -320,16 +323,16 @@ def main(input_path, workers=None, prepare_workers=None, out_csv='cooper_beta_re
         print(df[cols].to_string(index=False))
 
         df.to_csv(out_csv, index=False)
-        print(f"\n结果已保存: {out_csv}")
+        print(f"\nResults written to: {out_csv}")
     else:
-        header = f"{'Filename':<20} | {'Chain':<5} | {'Result':<10} | {'ScoreAdj':<8} | {'Valid':<9} | {'Radius':<7} | {'Reason':<25}"
+        header = f"{'Filename':<20} | {'Chain':<5} | {'Result':<10} | {'ScoreAdj':<8} | {'Valid':<9} | {'Reason':<40}"
         print("\n=== Summary ===")
         print(header)
         print("-" * len(header))
         for r in results:
             print(f"{r.get('filename',''):<20} | {r.get('chain',''):<5} | {r.get('result',''):<10} | "
-                  f"{r.get('score_adjust',0.0):<8.2f} | {r.get('valid_layers',''):<9} | {str(r.get('avg_radius','')):<7} | "
-                  f"{r.get('reason',''):<25}")
+                  f"{r.get('score_adjust',0.0):<8.2f} | {r.get('valid_layers',''):<9} | "
+                  f"{r.get('reason',''):<40}")
 
         _write_results_csv(results, out_csv)
-        print(f"\n结果已保存: {out_csv}")
+        print(f"\nResults written to: {out_csv}")

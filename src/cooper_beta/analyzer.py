@@ -5,10 +5,13 @@ from scipy.spatial import cKDTree
 
 class BarrelAnalyzer:
     """
-    分析切片数据：通用椭圆拟合 + score_adjust（忽略 junk slices）
-    可选规则：
-      - NN（最近邻距离均匀性）：过滤噪声/离散点
-      - Angle（角度最大缺口 + seq_order vs angle_order 一致性）：抑制 jelly-roll / beta-sandwich
+    Analyze slice data with a general ellipse fit plus score adjustment.
+
+    Optional rules:
+      - NN rule: nearest-neighbor spacing uniformity for filtering noisy or
+        scattered intersections.
+      - Angle rule: angular coverage plus sequence-order vs angle-order
+        consistency to suppress jelly-roll / beta-sandwich cases.
     """
 
     def __init__(
@@ -69,8 +72,9 @@ class BarrelAnalyzer:
 
     def _ellipse_residuals(self, params, x, y):
         """
-        通用椭圆残差（隐式方程 - 1）。
-        params: (xc, yc, a, b, theta)
+        General ellipse residuals using the implicit equation minus 1.
+
+        params: ``(xc, yc, a, b, theta)``
         """
         xc, yc, a, b, theta = params
 
@@ -86,8 +90,11 @@ class BarrelAnalyzer:
 
     def _robust_center(self, points_xy):
         """
-        简单鲁棒中心：用均值作为中心（切片点一般近似环，均值足够）。
-        若需要更强鲁棒，可替换为几何中位数。
+        Simple robust center estimate based on the mean.
+
+        Slice intersections are usually close to a ring, so the mean is
+        sufficient here. If stronger robustness is needed, this can be replaced
+        with a geometric median.
         """
         pts = np.asarray(points_xy, dtype=float)
         c = np.mean(pts, axis=0)
@@ -95,10 +102,11 @@ class BarrelAnalyzer:
 
     def _nn_spacing_stats(self, points_xy):
         """
-        最近邻距离均匀性统计（鲁棒）。
-        返回 (median, robust_sigma, robust_cv, inlier_frac)。
-        robust_sigma = 1.4826 * MAD
-        inlier: |d - median| <= 3 * robust_sigma
+        Robust nearest-neighbor spacing statistics.
+
+        Returns ``(median, robust_sigma, robust_cv, inlier_frac)`` where:
+        ``robust_sigma = 1.4826 * MAD`` and
+        ``inlier = |d - median| <= 3 * robust_sigma``.
         """
         pts = np.asarray(points_xy, dtype=float)
         if pts.ndim != 2 or pts.shape[0] < 3:
@@ -125,15 +133,17 @@ class BarrelAnalyzer:
         return med, robust_sigma, robust_cv, inlier_frac
 
     def _angular_gap_stats(self, points_xy):
-        """角度统计：最大角度缺口（max gap）。
+        """Compute angular coverage statistics, including the maximum gap.
 
-        1) 以中心点计算每个点的半径 r、角度 theta
-        2) 半径鲁棒过滤（去掉少量离群点，避免“零星点”填补缺口）
-        3) 计算排序后的相邻角度差（含首尾环绕） -> max_gap_deg
+        1) Compute radius ``r`` and angle ``theta`` around the slice center.
+        2) Apply a robust radial filter to remove a few outliers so isolated
+           points do not artificially close a gap.
+        3) Compute adjacent angular differences, including wrap-around, to get
+           ``max_gap_deg``.
 
-        返回：
-          (max_gap_deg, coverage_deg, used_n, center_x, center_y)
-        或 None（点数不足）。
+        Returns:
+          ``(max_gap_deg, coverage_deg, used_n, center_x, center_y)``
+        or ``None`` when too few points remain.
         """
         pts = np.asarray(points_xy, dtype=float)
         if pts.ndim != 2 or pts.shape[0] < 5:
@@ -162,7 +172,7 @@ class BarrelAnalyzer:
         ang = np.arctan2(dy2, dx2)  # [-pi, pi]
         ang = np.sort(ang)
 
-        # 计算相邻角度差（含环绕）
+        # Compute adjacent angular differences, including wrap-around.
         diffs = np.diff(ang)
         wrap = (ang[0] + 2.0 * np.pi) - ang[-1]
         diffs = np.concatenate([diffs, [wrap]])
@@ -175,17 +185,18 @@ class BarrelAnalyzer:
 
     @staticmethod
     def _best_circular_affine_fit_cost(angle_pos_by_seq):
-        """评估 seq_order 与 angle_order 的全局一致性。
+        """Evaluate global consistency between ``seq_order`` and ``angle_order``.
 
-        angle_pos_by_seq: 长度 N 的整数数组，每个元素是该 seq_order 在 angle_order 中的名次 [0..N-1]。
+        ``angle_pos_by_seq`` is an integer array of length ``N``. Each element is
+        the rank of that ``seq_order`` item inside ``angle_order``, in ``[0, N-1]``.
 
-        我们允许：
-          - 环状 shift（起点不定）
-          - 方向翻转（顺/逆时针）
+        Allowed transformations:
+          - Circular shift (arbitrary starting point)
+          - Direction reversal (clockwise / counter-clockwise)
 
-        返回：best_mean_circ_dist_norm ∈ [0,1]
-          - 0：完全一致
-          - 1：完全不一致（平均圆周距离接近 N/2）
+        Returns ``best_mean_circ_dist_norm`` in ``[0, 1]``:
+          - ``0`` means perfectly consistent
+          - ``1`` means maximally inconsistent
         """
         a = np.asarray(angle_pos_by_seq, dtype=int)
         n = int(a.size)
@@ -206,22 +217,23 @@ class BarrelAnalyzer:
                 if cost < best:
                     best = cost
 
-        # 数值稳定：限定到 [0,1]
+        # Numerical safety: clamp to [0, 1].
         return float(min(1.0, max(0.0, best)))
 
     def _seq_angle_order_stats(self, points):
-        """在同一批交点上同时计算 seq_order 与 angle_order，并给出一致性统计。
+        """Compute sequence-order and angle-order consistency on one slice.
 
-        输入 points 期望包含 (x, y, seq_pos)；若缺少 seq_pos 或点数不足则返回 None。
+        ``points`` is expected to contain ``(x, y, seq_pos)``. Returns ``None``
+        if ``seq_pos`` is missing or too few points are available.
 
-        返回 dict：
-          - order_used_n
-          - order_local_frac
-          - order_mean_step
-          - order_max_step
-          - order_mean_circ_dist_norm
-          - seq_neighbor_dist_median
-          - seq_neighbor_dist_robust_cv
+        Returns a dict containing:
+          - ``order_used_n``
+          - ``order_local_frac``
+          - ``order_mean_step``
+          - ``order_max_step``
+          - ``order_mean_circ_dist_norm``
+          - ``seq_neighbor_dist_median``
+          - ``seq_neighbor_dist_robust_cv``
         """
         pts = np.asarray(points, dtype=float)
         if pts.ndim != 2 or pts.shape[0] < 6 or pts.shape[1] < 3:
@@ -230,7 +242,8 @@ class BarrelAnalyzer:
         xy = pts[:, :2]
         seq_pos = pts[:, 2]
 
-        # 与 angle gap 相同的半径鲁棒过滤，避免少量离群点扰乱顺序
+        # Use the same radial filtering as the angle-gap calculation so a few
+        # outliers do not scramble the order statistics.
         cx, cy = self._robust_center(xy)
         dx = xy[:, 0] - cx
         dy = xy[:, 1] - cy
@@ -265,7 +278,8 @@ class BarrelAnalyzer:
 
         angle_pos_by_seq = pos_in_angle[seq_order]
 
-        # 局部一致性：相邻 seq_order 在 angle_order 上的圆周距离
+        # Local consistency: circular distance between adjacent seq_order items
+        # in angle_order rank space.
         steps = []
         for i in range(n - 1):
             d = abs(int(angle_pos_by_seq[i + 1]) - int(angle_pos_by_seq[i]))
@@ -276,10 +290,11 @@ class BarrelAnalyzer:
         mean_step = float(np.mean(steps)) if steps.size else 0.0
         max_step = float(np.max(steps)) if steps.size else 0.0
 
-        # 全局一致性（考虑 shift/翻转）
+        # Global consistency with shift and direction reversal allowed.
         mean_circ_dist_norm = float(self._best_circular_affine_fit_cost(angle_pos_by_seq))
 
-        # 你最初的想法：按 seq_order 相邻点的欧氏距离分布
+        # Additional diagnostic: Euclidean spacing between adjacent seq_order
+        # points on the slice.
         seq_xy = xy2[seq_order]
         dxy = np.diff(seq_xy, axis=0)
         dseq = np.sqrt(np.sum(dxy * dxy, axis=1))
@@ -303,19 +318,20 @@ class BarrelAnalyzer:
 
     def fit_slice(self, points):
         """
-        对切片点进行通用椭圆拟合（含旋转）。
-        返回 dict 或 None。
+        Fit a rotated general ellipse to the slice intersections.
+
+        Returns a result dict or ``None``.
         """
         pts = np.asarray(points, dtype=float)
         if pts.ndim != 2 or pts.shape[0] < self.min_points:
             return None
 
-        # points 可能包含额外列（如 seq_pos），拟合只使用前两列 (x,y)
+        # points may include extra columns such as seq_pos; fit only uses x and y.
         pts_xy = pts[:, :2]
         x = pts_xy[:, 0]
         y = pts_xy[:, 1]
 
-        # PCA 初始化
+        # PCA-based initialization.
         xc0 = float(np.mean(x))
         yc0 = float(np.mean(y))
         centered = pts_xy - np.array([xc0, yc0], dtype=float)
@@ -352,14 +368,16 @@ class BarrelAnalyzer:
 
     def analyze(self, slices_dict):
         """
-        主分析函数。
+        Main slice-analysis entry point.
 
-        score:        valid_count / total_layers（所有 active layers）
-        score_adjust: valid_count_scored / total_scored_layers（忽略 junk slices）
-            junk slices:
-              1) n_points < max(min_intersections_for_scoring, min_points)
-              2) NN rule 不通过 且 nn_fail_as_junk=True
-              3) Angle rule 不通过 且 angle_fail_as_junk=True
+        ``score`` is ``valid_count / total_layers`` across all active slices.
+        ``score_adjust`` is ``valid_count_scored / total_scored_layers`` after
+        excluding junk slices.
+
+        A slice is considered junk when:
+          1) ``n_points < max(min_intersections_for_scoring, min_points)``
+          2) The NN rule fails and ``nn_fail_as_junk=True``
+          3) The angle rule fails and ``angle_fail_as_junk=True``
         """
         results = []
         valid_count = 0
@@ -370,7 +388,7 @@ class BarrelAnalyzer:
         total_layers = len(active_layers)
 
         if total_layers == 0:
-            return {"is_barrel": False, "score": 0.0, "score_adjust": 0.0, "msg": "无有效切片数据"}
+            return {"is_barrel": False, "score": 0.0, "score_adjust": 0.0, "msg": "No active slices were found."}
 
         min_score_pts = max(self.min_intersections_for_scoring, self.min_points)
         total_scored_layers = 0
@@ -381,14 +399,20 @@ class BarrelAnalyzer:
             points = slices_dict[z]
             npts = len(points)
 
-            # 点数过少 -> junk
+            # Too few intersections: exclude this slice from scoring.
             if npts < min_score_pts:
-                results.append({"z": float(z), "n_points": npts, "fit": None, "valid": False, "reason": f"JUNK(<{min_score_pts} pts)"})
+                results.append({
+                    "z": float(z),
+                    "n_points": npts,
+                    "fit": None,
+                    "valid": False,
+                    "reason": f"JUNK(too few intersections: need >= {min_score_pts})",
+                })
                 continue
 
             pts_xy = [(p[0], p[1]) for p in points]
 
-            # NN rule
+            # Nearest-neighbor spacing rule.
             nn_stats = None
             nn_ok = True
             if self.nn_rule_enabled:
@@ -403,7 +427,7 @@ class BarrelAnalyzer:
                     "n_points": npts,
                     "fit": None,
                     "valid": False,
-                    "reason": "JUNK(NN irregular)",
+                    "reason": "JUNK(irregular nearest-neighbor spacing)",
                     "nn_median": nn_stats[0] if nn_stats else None,
                     "nn_sigma": nn_stats[1] if nn_stats else None,
                     "nn_cv": nn_stats[2] if nn_stats else None,
@@ -411,13 +435,13 @@ class BarrelAnalyzer:
                 })
                 continue
 
-            # Angle rule：最大角度缺口 + seq_order vs angle_order 一致性
+            # Angle rule: geometric coverage plus seq_order vs angle_order consistency.
             ang_stats = None
             order_stats = None
             ang_ok = True
             ang_fail_reason = None
             if self.angle_rule_enabled:
-                # 1) 角度缺口（几何覆盖）
+                # 1) Angular gap / geometric coverage.
                 ang_stats = self._angular_gap_stats(pts_xy)
                 if ang_stats is not None:
                     max_gap_deg, coverage_deg, used_n, cx, cy = ang_stats
@@ -425,7 +449,7 @@ class BarrelAnalyzer:
                 else:
                     gap_ok = True
 
-                # 2) 顺序一致性（需要 points 包含 seq_pos）
+                # 2) Ordering consistency, which requires seq_pos in the points.
                 order_ok = True
                 if self.angle_order_rule_enabled:
                     order_stats = self._seq_angle_order_stats(points)
@@ -434,12 +458,12 @@ class BarrelAnalyzer:
                         global_ok = (order_stats.get("order_mean_circ_dist_norm", 0.0) <= self.angle_order_max_mean_circ_dist_norm)
                         order_ok = local_ok and global_ok
                         if not local_ok:
-                            ang_fail_reason = "Seq-angle local mismatch"
+                            ang_fail_reason = "Local sequence/angle order mismatch"
                         elif not global_ok:
-                            ang_fail_reason = "Seq-angle global mismatch"
+                            ang_fail_reason = "Global sequence/angle order mismatch"
 
                 if not gap_ok:
-                    ang_fail_reason = "Angle gap too large"
+                    ang_fail_reason = "Angular gap is too large"
 
                 ang_ok = gap_ok and order_ok
 
@@ -449,7 +473,7 @@ class BarrelAnalyzer:
                     "n_points": npts,
                     "fit": None,
                     "valid": False,
-                    "reason": f"JUNK({ang_fail_reason or 'Angle rule'})",
+                    "reason": f"JUNK({ang_fail_reason or 'Angle rule failed'})",
                     "angle_max_gap_deg": ang_stats[0] if ang_stats else None,
                     "angle_coverage_deg": ang_stats[1] if ang_stats else None,
                     "angle_used_n": ang_stats[2] if ang_stats else None,
@@ -465,17 +489,19 @@ class BarrelAnalyzer:
                 })
                 continue
 
-            # 进入计分分母（点数足够，且如果设置 fail_as_junk 则已通过相关规则）
+            # Include the slice in the scoring denominator. At this point it has
+            # enough points and has already passed any rule marked as junk-on-fail.
             total_scored_layers += 1
 
-            # 若规则失败但不视为 junk：计入分母，直接判该层无效
+            # If a rule fails but is not treated as junk, keep the slice in the
+            # denominator and mark it invalid.
             if (not nn_ok) and (not self.nn_fail_as_junk):
                 results.append({
                     "z": float(z),
                     "n_points": npts,
                     "fit": None,
                     "valid": False,
-                    "reason": "NN irregular",
+                    "reason": "Nearest-neighbor spacing is irregular",
                     "nn_median": nn_stats[0] if nn_stats else None,
                     "nn_sigma": nn_stats[1] if nn_stats else None,
                     "nn_cv": nn_stats[2] if nn_stats else None,
@@ -521,24 +547,24 @@ class BarrelAnalyzer:
                 })
                 continue
 
-            # 椭圆拟合
+            # Ellipse fitting.
             fit = self.fit_slice(points)
             if fit is None:
-                reason = "Points < Min"
+                reason = "Ellipse fit failed"
                 is_valid = False
             else:
                 a, b, rmse = fit["a"], fit["b"], fit["rmse"]
                 if rmse > self.max_rmse:
-                    reason = f"RMSE > {self.max_rmse}"
+                    reason = f"Ellipse fit RMSE exceeds {self.max_rmse}"
                     is_valid = False
                 elif a < self.min_axis or b < self.min_axis:
-                    reason = "Axis too small"
+                    reason = "Ellipse axis is below the minimum threshold"
                     is_valid = False
                 elif a > self.max_axis or b > self.max_axis:
-                    reason = "Axis too large"
+                    reason = "Ellipse axis exceeds the maximum threshold"
                     is_valid = False
                 elif (a / b) > self.max_flattening:
-                    reason = "Too flat"
+                    reason = "Slice is too flattened"
                     is_valid = False
                 else:
                     reason = "OK"
@@ -578,7 +604,7 @@ class BarrelAnalyzer:
         avg_radius = float(np.mean(valid_radii)) if valid_radii else 0.0
 
         return {
-            "is_barrel": None,  # 由 main.py 选择 score/score_adjust 后决定
+            "is_barrel": None,  # Determined later by the pipeline using score or score_adjust.
             "score": float(score),
             "score_adjust": float(score_adjust),
             "valid_layers": int(valid_count_scored),
