@@ -78,6 +78,18 @@ class DecisionConfig:
 
 
 @dataclass
+class AxisSearchRefineConfig:
+    enabled: bool = True
+    angle_deg: float = 5.0
+
+
+@dataclass
+class AxisSearchConfig:
+    enabled: bool = True
+    refine: AxisSearchRefineConfig = field(default_factory=AxisSearchRefineConfig)
+
+
+@dataclass
 class NearestNeighborRuleConfig:
     enabled: bool = True
     max_robust_cv: float = 0.40
@@ -117,6 +129,7 @@ class AnalyzerRulesConfig:
 class AnalyzerConfig:
     fit: EllipseFitConfig = field(default_factory=EllipseFitConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
+    axis_search: AxisSearchConfig = field(default_factory=AxisSearchConfig)
     rules: AnalyzerRulesConfig = field(default_factory=AnalyzerRulesConfig)
 
 
@@ -146,6 +159,9 @@ LEGACY_OVERRIDE_PATHS = {
     "MIN_INTERSECTIONS_FOR_SCORING": "analyzer.decision.min_intersections_for_scoring",
     "USE_ADJUSTED_SCORE": "analyzer.decision.use_adjusted_score",
     "MIN_SCORED_LAYER_FRAC": "analyzer.decision.min_scored_layer_frac",
+    "AXIS_SEARCH_ENABLED": "analyzer.axis_search.enabled",
+    "AXIS_SEARCH_REFINE_ENABLED": "analyzer.axis_search.refine.enabled",
+    "AXIS_SEARCH_REFINE_ANGLE_DEG": "analyzer.axis_search.refine.angle_deg",
     "NN_RULE_ENABLED": "analyzer.rules.nearest_neighbor.enabled",
     "NN_MAX_ROBUST_CV": "analyzer.rules.nearest_neighbor.max_robust_cv",
     "NN_MIN_INLIER_FRAC": "analyzer.rules.nearest_neighbor.min_inlier_frac",

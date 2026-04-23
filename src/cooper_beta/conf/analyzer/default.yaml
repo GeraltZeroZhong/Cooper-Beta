@@ -16,6 +16,11 @@ decision:
   use_adjusted_score: true
   min_intersections_for_scoring: 7
   min_scored_layer_frac: 0.04
+axis_search:
+  enabled: true
+  refine:
+    enabled: true
+    angle_deg: 5.0
 rules:
   nearest_neighbor:
     enabled: true
