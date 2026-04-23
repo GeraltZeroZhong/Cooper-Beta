@@ -2,94 +2,104 @@ import os
 
 class Config:
     # --- Loader ---
-    # DSSP 可执行文件路径 (如果自动查找失败，请在此填入绝对路径)
-    # 例如: "/usr/bin/mkdssp" 或 "/home/user/miniconda3/bin/mkdssp"
-    DSSP_BIN_PATH = None  
-    
+    # DSSP executable path. Set this to an absolute path if automatic discovery
+    # fails, for example:
+    # "/usr/bin/mkdssp" or "/home/user/miniconda3/bin/mkdssp"
+    DSSP_BIN_PATH = None
+
     # --- Slicer ---
-    # 切片层厚度 (Angstrom)
+    # Slice thickness in angstroms.
     SLICE_STEP_SIZE = 1.0
-    
+
     # --- Analyzer (Elliptical Fitting) ---
-    # 拟合通用椭圆 (5参数) 至少需要 5 个点，建议设为 6 以增加稳定性
-    MIN_POINTS_PER_SLICE = 7     
-    
-    # 允许的最大拟合误差 (RMSE, Å)
-    MAX_FIT_RMSE = 3       
-    
-    # 椭圆半轴长范围 (Å)
-    # 对应 min_axis 和 max_axis
+    # A general ellipse fit (5 parameters) needs at least 5 points. We use a
+    # slightly larger default for stability.
+    MIN_POINTS_PER_SLICE = 7
+
+    # Maximum allowed fit error (RMSE, angstroms).
+    MAX_FIT_RMSE = 3
+
+    # Allowed ellipse semi-axis range (angstroms).
     MIN_AXIS = 3.0
     MAX_AXIS = 199.0
-    
-    # 最大扁平率 (长轴/短轴)
-    # 如果该值过大 (如 > 3.0)，说明切面被压得极扁，可能不是桶
+
+    # Maximum flattening ratio (major_axis / minor_axis). Very large values mean
+    # the slice looks overly compressed and is unlikely to be a barrel.
     MAX_FLATTENING = 3.5
 
     # --- Robust fitting (least_squares) ---
-    LSQ_METHOD = 'trf'         # 'trf' 支持鲁棒 loss
-    LSQ_LOSS = 'soft_l1'       # 可改为 'huber'
-    LSQ_F_SCALE = 1.0          # 鲁棒损失的尺度参数
-    
+    LSQ_METHOD = 'trf'         # 'trf' supports robust losses.
+    LSQ_LOSS = 'soft_l1'       # You can switch this to 'huber' if needed.
+    LSQ_F_SCALE = 1.0          # Scale parameter for the robust loss.
+
     # --- Decision ---
-    # 最终判定阈值：有效切片占比 > VALID_RATIO 即认为是 Barrel
+    # Final decision threshold: classify as BARREL when the valid-slice ratio
+    # exceeds BARREL_VALID_RATIO.
     BARREL_VALID_RATIO = 0.5
 
     # --- Scoring adjustment ---
-    # 计入 score_adjust 分母的最小交点数（点数太少的切片视为 junk，不计入分母）
+    # Minimum number of intersections required for a slice to contribute to the
+    # score_adjust denominator. Slices with too few points are treated as junk.
     MIN_INTERSECTIONS_FOR_SCORING = 7
 
-    # 是否用 score_adjust 作为最终判定分数
+    # Whether to use score_adjust as the final decision score.
     USE_ADJUSTED_SCORE = True
 
     # --- Control condition ---
-    # 要求 score_adjust 的分母（all_adjusted_layers）不能太小，否则分数不稳定
-    # 条件：all_adjusted_layers > all_layers * MIN_SCORED_LAYER_FRAC
+    # Require enough scored slices; otherwise score_adjust becomes unstable.
+    # Condition: all_adjusted_layers > all_layers * MIN_SCORED_LAYER_FRAC
     MIN_SCORED_LAYER_FRAC = 0.20
+
     # --- Nearest-neighbor spacing rule (optional) ---
-    # 基于几何最近邻距离的“均匀性”检验：用于识别噪声/离散/重复点导致的异常切片
+    # Uniformity check based on geometric nearest-neighbor distances. Useful for
+    # flagging noisy, sparse, or duplicated intersections.
     NN_RULE_ENABLED = True
 
-    # 最近邻距离的离散程度阈值：使用 robust CV = (1.4826*MAD) / median
-    # 值越小越严格（更偏 precision），值越大越宽松（更偏 recall）
+    # Dispersion threshold for nearest-neighbor distances, using robust CV =
+    # (1.4826 * MAD) / median. Smaller is stricter, larger is more permissive.
     NN_MAX_ROBUST_CV = 0.40
 
-    # 允许的离群点比例：inlier 定义为 |d - median| <= 3 * robust_sigma
+    # Minimum inlier fraction, where inliers satisfy
+    # |d - median| <= 3 * robust_sigma.
     NN_MIN_INLIER_FRAC = 0.75
 
-    # 若切片不通过 NN 规则，是否视为 junk（不计入 score_adjust 分母）
-    # True：更偏 recall；False：更偏 precision（算作无效层，会拉低分数）
+    # Whether a slice that fails the NN rule should be excluded from scoring as
+    # junk. True tends to favor recall; False tends to favor precision.
     NN_FAIL_AS_JUNK = True
 
-
     # --- Angular coverage / gap rule (for jelly-roll rejection) ---
-    # 基于截面点的角度分布：beta-barrel 截面应接近 360° 覆盖，jelly-roll 常出现大缺口
+    # Beta-barrel cross sections should cover nearly 360 degrees. Jelly-roll
+    # structures often leave large angular gaps.
     ANGLE_RULE_ENABLED = True
 
-    # 允许的最大角度缺口（度）。越小越严格（更偏 precision）
+    # Maximum allowed angular gap, in degrees. Smaller values are stricter.
     ANGLE_MAX_GAP_DEG = 80
 
-    # --- New: seq_order vs angle_order consistency rule ---
-    # 同一切片内，每个交点同时具备：
-    #   - seq_order：由线段 (i, i+1) 的序列位置 i+0.5 排序得到
-    #   - angle_order：以切片中心为极点，按角度 [0,360) 排序得到
-    # 真正 β-barrel 的交点沿序列推进时，通常也会沿圆周“近邻”推进；
-    # jelly-roll / β-sandwich 常出现跨对侧的大跳跃。
+    # --- Sequence-order vs angle-order consistency rule ---
+    # For each slice, every intersection has both:
+    #   - seq_order: the order induced by segment positions i + 0.5
+    #   - angle_order: the order induced by polar angle around the slice center
+    # True beta barrels usually advance locally around the circumference as
+    # sequence order advances. Jelly-roll / beta-sandwich structures often jump
+    # across the opposite side of the slice.
     #
-    # local_step：相邻 seq_order 在 angle_order 上的圆周距离（以“名次数”计，环状取最小距离）。
-    # local_frac：local_step <= ANGLE_ORDER_LOCAL_STEP_MAX 的比例。
+    # local_step: circular distance between adjacent seq_order neighbors in
+    # angle_order rank space.
+    # local_frac: fraction of local_step values that are within the threshold.
     ANGLE_ORDER_RULE_ENABLED = True
 
-    # 判定“局部邻近”的最大步长（以 angle_order 名次数计）。
+    # Maximum local step that still counts as "locally adjacent" in angle_order.
     ANGLE_ORDER_LOCAL_STEP_MAX = 1
 
-    # 通过条件：local_frac >= 该阈值。值越大越严格。
+    # Pass condition: local_frac must be at least this threshold.
     ANGLE_ORDER_MIN_LOCAL_FRAC = 1
 
-    # 额外：全局顺序一致性（考虑环状 shift 与方向翻转），归一化到 [0,1]。
-    # 0 表示与某个环状 shift / 方向完全一致；1 表示完全不一致。
+    # Additional global consistency score, normalized to [0, 1], while allowing
+    # circular shifts and reversed direction.
+    # 0 means a perfect match to some shift/direction; 1 means maximally inconsistent.
     ANGLE_ORDER_MAX_MEAN_CIRC_DIST_NORM = 0
 
-    # 角度规则失败时是否视为 junk（不计入 score_adjust 分母）
-    # 为了更好剔除 jelly-roll，默认 False（失败计入分母并拉低分数）
+    # Whether slices that fail the angle rule should be excluded from scoring as
+    # junk. Default False keeps them in the denominator and lowers the score,
+    # which helps reject jelly-roll-like structures.
     ANGLE_FAIL_AS_JUNK = False

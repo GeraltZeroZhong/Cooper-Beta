@@ -37,7 +37,7 @@ def _legacy_cli(argv: list[str]) -> None:
     workers = None
     prepare_workers = None
 
-    # 用法：
+    # Usage:
     #   python main.py <path> [analyze_workers] [prepare_workers]
     if len(argv) > 1:
         target_path = argv[1]

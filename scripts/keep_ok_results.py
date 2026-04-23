@@ -24,42 +24,44 @@ import pandas as pd
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        description='Filter a Cooper-Beta results CSV to rows where `result == "BARREL"` and `reason == "OK"`.'
+    )
     ap.add_argument(
         "--input",
         default="cooper_beta_results.csv",
-        help="输入 CSV（默认: cooper_beta_results.csv）",
+        help="Input CSV path (default: cooper_beta_results.csv).",
     )
     ap.add_argument(
         "--output",
         default="cooper_beta_results_OK.csv",
-        help="输出 CSV（默认: cooper_beta_results_OK.csv）",
+        help="Output CSV path (default: cooper_beta_results_OK.csv).",
     )
     ap.add_argument(
         "--inplace",
         action="store_true",
-        help="直接覆盖输入文件（忽略 --output）",
+        help="Overwrite the input CSV in place and ignore --output.",
     )
     args = ap.parse_args()
 
     in_path = Path(args.input).resolve()
     if not in_path.exists():
-        print(f"[X] 输入文件不存在: {in_path}", file=sys.stderr)
+        print(f"[ERROR] Input CSV does not exist: {in_path}", file=sys.stderr)
         sys.exit(1)
 
     try:
         df = pd.read_csv(in_path)
     except Exception as e:
-        print(f"[X] 读取失败: {in_path}\n    {e}", file=sys.stderr)
+        print(f"[ERROR] Failed to read CSV: {in_path}\n    {e}", file=sys.stderr)
         sys.exit(1)
 
-    # 检查必要列
+    # Validate required columns.
     for col in ("result", "reason"):
         if col not in df.columns:
-            print(f"[X] 缺少列: {col}（现有列: {list(df.columns)}）", file=sys.stderr)
+            print(f"[ERROR] Missing required column: {col}. Available columns: {list(df.columns)}", file=sys.stderr)
             sys.exit(1)
 
-    # 过滤：BARREL + OK
+    # Keep rows classified as BARREL with reason OK.
     result_upper = df["result"].astype(str).str.upper()
     reason_str = df["reason"].astype(str)
 
@@ -69,12 +71,12 @@ def main():
     try:
         df_ok.to_csv(out_path, index=False)
     except Exception as e:
-        print(f"[X] 写出失败: {out_path}\n    {e}", file=sys.stderr)
+        print(f"[ERROR] Failed to write CSV: {out_path}\n    {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"[OK] 输入: {in_path}")
-    print(f"[OK] 输出: {out_path}")
-    print(f"[OK] 保留行数: {len(df_ok)} / {len(df)}")
+    print(f"[OK] Input : {in_path}")
+    print(f"[OK] Output: {out_path}")
+    print(f"[OK] Rows kept: {len(df_ok)} / {len(df)}")
 
 
 if __name__ == "__main__":

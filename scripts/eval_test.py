@@ -354,22 +354,24 @@ def evaluate(
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--true", default="data-true", help="正例文件夹（beta-barrel-like）")
-    ap.add_argument("--false", default="data-false", help="反例文件夹（non barrel）")
-    ap.add_argument("--workers", type=int, default=None, help="分析阶段进程数（默认：pipeline 内部默认）")
-    ap.add_argument("--prepare", type=int, default=None, help="Preparing 阶段进程数（默认：跟随 workers）")
-    ap.add_argument("--save-dir", default="eval_outputs", help="保存评估结果的目录（CSV，用于 ROC/PR）")
+    ap = argparse.ArgumentParser(
+        description="Evaluate Cooper-Beta on positive and negative folders and save CSV outputs for ROC/PR analysis."
+    )
+    ap.add_argument("--true", default="data-true", help="Directory containing positive examples (beta-barrel-like structures).")
+    ap.add_argument("--false", default="data-false", help="Directory containing negative examples (non-barrel structures).")
+    ap.add_argument("--workers", type=int, default=None, help="Number of analysis workers (default: pipeline default).")
+    ap.add_argument("--prepare", type=int, default=None, help="Number of preparation workers (default: follows --workers).")
+    ap.add_argument("--save-dir", default="eval_outputs", help="Directory where evaluation CSV files are written.")
     ap.add_argument(
         "--metric-level",
         choices=["chain", "file", "both"],
         default="both",
-        help="打印指标层级：chain/file/both（默认 both）",
+        help="Which metric level to print: chain, file, or both (default: both).",
     )
     ap.add_argument(
         "--ablation",
         action="store_true",
-        help="运行主效应与交互（7 组）消融套件，并输出 summary CSV",
+        help="Run the 7-experiment ablation suite (main effects + interactions) and write a summary CSV.",
     )
     args = ap.parse_args()
 

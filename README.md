@@ -21,28 +21,30 @@ whether each chain is classified as a beta-barrel.
 - Core dependencies: NumPy, SciPy, Biopython
 - Optional: pandas and tqdm for richer summaries/progress output
 
-`pip` 只能安装 Python 依赖，不能替你安装 DSSP 这样的系统二进制。Cooper-Beta
-现在会在启动分析前主动检查 DSSP；如果没找到，会直接报错并提示用户先安装 DSSP，
-或者在 `src/cooper_beta/config.py` 里设置 `DSSP_BIN_PATH`。
+`pip` can install Python packages, but it cannot install system binaries such as
+DSSP for you. Cooper-Beta now checks for DSSP before analysis starts. If the
+binary is missing, the program fails fast with a clear message telling you to
+install DSSP first or set `src/cooper_beta/config.py -> Config.DSSP_BIN_PATH`.
 
 ### Recommended: one-command setup
-仓库现在提供了 `environment.yml` 和 `scripts/setup_env.sh`。优先推荐这条路径，因为
-它会通过 `mamba` / `conda` 把 DSSP 一起装进环境里，再安装本项目：
+This repository ships with `environment.yml` and `scripts/setup_env.sh`. This is
+the recommended setup path because it installs DSSP with `mamba` / `conda`
+alongside the Python environment and then installs this project:
 
 ```bash
 bash scripts/setup_env.sh
 ```
 
-如果你还想把测试和 lint 工具也一起装上，可以用：
+If you also want the test and lint tooling, run:
 
 ```bash
 bash scripts/setup_env.sh --dev
 ```
 
-脚本行为：
-- 优先使用 `mamba` / `micromamba` / `conda`，并从 `conda-forge` 安装 `dssp`
-- 如果没有 conda 类工具，但系统有 `apt-get`，则会回退到 `apt install dssp` + `.venv`
-- 最后会提示你如何激活环境
+What the setup script does:
+- Prefer `mamba`, `micromamba`, or `conda`, and install `dssp` from `conda-forge`
+- Fall back to `apt install dssp` plus a local `.venv` if no conda-style tool is available but `apt-get` exists
+- Print the exact activation command at the end
 
 ### Install from source
 ```bash
@@ -59,7 +61,8 @@ pip install -e ".[full]"
 cooper-beta --check-env
 ```
 
-如果输出里能看到 Python 版本和 DSSP 路径，说明运行环境已经就绪。
+If the output shows both the Python version and the DSSP path, the runtime
+environment is ready.
 
 ## Usage
 ### Command-line
