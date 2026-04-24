@@ -447,6 +447,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
 
     total_layers = int(report.get("total_layers", 0))
     total_scored_layers = int(report.get("total_scored_layers", 0))
+    avg_radius = float(report.get("avg_radius", 0.0))
     scored_layer_frac = (total_scored_layers / total_layers) if total_layers else 0.0
     enough_scored_layers = True
     if decision_cfg.use_adjusted_score:
@@ -455,7 +456,44 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
             and total_scored_layers >= int(decision_cfg.min_scored_layers)
         )
 
-    is_barrel = enough_scored_layers and (final_score >= decision_cfg.barrel_valid_ratio)
+    rescue_cfg = decision_cfg.small_barrel_rescue
+    rescued_small_barrel = (
+        decision_cfg.use_adjusted_score
+        and (not enough_scored_layers)
+        and bool(rescue_cfg.enabled)
+        and (
+            (
+                final_score >= float(rescue_cfg.min_score)
+                and total_scored_layers >= int(rescue_cfg.min_scored_layers)
+                and total_layers >= int(rescue_cfg.min_total_layers)
+                and 0.0 < avg_radius <= float(rescue_cfg.max_avg_radius)
+            )
+            or (
+                bool(rescue_cfg.compact_enabled)
+                and final_score >= float(rescue_cfg.compact_min_score)
+                and total_scored_layers >= int(rescue_cfg.compact_min_scored_layers)
+                and total_layers >= int(rescue_cfg.compact_min_total_layers)
+                and total_layers <= int(rescue_cfg.compact_max_total_layers)
+                and chain_residue_count >= int(rescue_cfg.compact_min_chain_residues)
+                and sheet_residue_count >= int(rescue_cfg.compact_min_sheet_residues)
+                and 0.0 < avg_radius <= float(rescue_cfg.compact_max_avg_radius)
+            )
+            or (
+                bool(rescue_cfg.sparse_enabled)
+                and final_score >= float(rescue_cfg.sparse_min_score)
+                and total_scored_layers >= int(rescue_cfg.sparse_min_scored_layers)
+                and total_layers >= int(rescue_cfg.sparse_min_total_layers)
+                and chain_residue_count >= int(rescue_cfg.sparse_min_chain_residues)
+                and chain_residue_count <= int(rescue_cfg.sparse_max_chain_residues)
+                and sheet_residue_count >= int(rescue_cfg.sparse_min_sheet_residues)
+                and 0.0 < avg_radius <= float(rescue_cfg.sparse_max_avg_radius)
+            )
+        )
+    )
+
+    is_barrel = (enough_scored_layers or rescued_small_barrel) and (
+        final_score >= decision_cfg.barrel_valid_ratio
+    )
     layer_details = list(report.get("layer_details", []) or [])
 
     invalid_reasons: list[str] = []

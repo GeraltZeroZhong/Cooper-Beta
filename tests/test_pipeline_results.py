@@ -210,6 +210,129 @@ def test_analyze_chain_payload_requires_minimum_scored_layers(monkeypatch: pytes
     )
 
 
+def test_analyze_chain_payload_rescues_high_confidence_small_barrel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 4
+    cfg.input.min_sheet_residues = 2
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.small_barrel_rescue.enabled = True
+    cfg.analyzer.decision.small_barrel_rescue.min_score = 0.999
+    cfg.analyzer.decision.small_barrel_rescue.min_scored_layers = 5
+    cfg.analyzer.decision.small_barrel_rescue.min_total_layers = 25
+    cfg.analyzer.decision.small_barrel_rescue.max_avg_radius = 10.5
+
+    payload = {
+        "filename": "small-barrel.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(0.0, 0.0, 0.0, is_sheet=True),
+            _residue(1.0, 0.0, 1.0, is_sheet=True),
+            _residue(2.0, 0.0, 2.0, is_sheet=True),
+            _residue(3.0, 0.0, 3.0, is_sheet=False),
+        ],
+    }
+    report = {
+        "score": 5.0 / 30.0,
+        "score_adjust": 1.0,
+        "valid_layers": 5,
+        "total_layers": 30,
+        "total_scored_layers": 5,
+        "avg_radius": 8.0,
+        "layer_details": [{"reason": "OK"} for _ in range(5)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=30)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_BARREL
+    assert row["reason"] == "OK"
+    assert row["decision_score"] == pytest.approx(1.0)
+    assert row["scored_layers"] == 5
+
+
+def test_analyze_chain_payload_rescues_compact_high_confidence_barrel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.small_barrel_rescue.enabled = True
+    cfg.analyzer.decision.small_barrel_rescue.compact_enabled = True
+
+    payload = {
+        "filename": "compact-barrel.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 63)
+            for index in range(210)
+        ],
+    }
+    report = {
+        "score": 4.0 / 19.0,
+        "score_adjust": 1.0,
+        "valid_layers": 4,
+        "total_layers": 19,
+        "total_scored_layers": 4,
+        "avg_radius": 12.3,
+        "layer_details": [{"reason": "OK"} for _ in range(4)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=19)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_BARREL
+    assert row["reason"] == "OK"
+    assert row["scored_layers"] == 4
+
+
+def test_analyze_chain_payload_rescues_sparse_high_confidence_barrel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.small_barrel_rescue.enabled = True
+    cfg.analyzer.decision.small_barrel_rescue.sparse_enabled = True
+
+    payload = {
+        "filename": "sparse-barrel.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 76)
+            for index in range(170)
+        ],
+    }
+    report = {
+        "score": 3.0 / 35.0,
+        "score_adjust": 1.0,
+        "valid_layers": 3,
+        "total_layers": 35,
+        "total_scored_layers": 3,
+        "avg_radius": 8.8,
+        "layer_details": [{"reason": "OK"} for _ in range(3)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=35)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_BARREL
+    assert row["reason"] == "OK"
+    assert row["scored_layers"] == 3
+
+
 def test_analyze_chain_payload_uses_raw_score_when_configured(monkeypatch: pytest.MonkeyPatch):
     cfg = AppConfig()
     cfg.input.min_chain_residues = 4
