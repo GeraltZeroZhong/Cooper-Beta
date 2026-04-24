@@ -3,7 +3,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
-data/
+data/*
+!data/manual_positive_label_notes.txt
+!data/fn_manual_review_status.csv
+!data/fn_manual_review_status_sparse_rescue.csv
+!data/scripts/
+!data/scripts/*.py
 data-test/
 eval_outputs/
 real-data/
