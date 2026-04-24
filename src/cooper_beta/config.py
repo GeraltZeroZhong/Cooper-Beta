@@ -95,6 +95,42 @@ class SmallBarrelRescueConfig:
 
 
 @dataclass
+class NearMissRescueConfig:
+    enabled: bool = False
+    soft_nn_enabled: bool = False
+    soft_nn_min_layers: int = 3
+    soft_nn_min_inlier_frac: float = 0.70
+    soft_nn_max_robust_cv: float = 0.20
+    soft_nn_min_total_layers: int = 30
+    soft_nn_max_total_layers: int = 40
+    soft_nn_min_chain_residues: int = 220
+    soft_nn_max_chain_residues: int = 260
+    soft_nn_min_sheet_residues: int = 60
+    soft_nn_max_sheet_residues: int = 80
+    compact_partner_enabled: bool = False
+    compact_partner_min_score: float = 0.50
+    compact_partner_min_valid_layers: int = 1
+    compact_partner_min_scored_layers: int = 2
+    compact_partner_min_total_layers: int = 16
+    compact_partner_max_total_layers: int = 22
+    compact_partner_min_chain_residues: int = 180
+    compact_partner_max_chain_residues: int = 220
+    compact_partner_min_sheet_residues: int = 65
+    compact_partner_max_sheet_residues: int = 85
+    compact_partner_min_avg_radius: float = 8.0
+    compact_partner_max_avg_radius: float = 13.0
+    large_partner_enabled: bool = False
+    large_partner_min_score: float = 0.55
+    large_partner_min_valid_layers: int = 16
+    large_partner_min_scored_layers: int = 25
+    large_partner_min_total_layers: int = 50
+    large_partner_min_chain_residues: int = 500
+    large_partner_min_sheet_residues: int = 200
+    large_partner_min_avg_radius: float = 15.0
+    large_partner_max_avg_radius: float = 25.0
+
+
+@dataclass
 class DecisionConfig:
     barrel_valid_ratio: float = 0.529
     use_adjusted_score: bool = True
@@ -104,6 +140,7 @@ class DecisionConfig:
     small_barrel_rescue: SmallBarrelRescueConfig = field(
         default_factory=SmallBarrelRescueConfig
     )
+    near_miss_rescue: NearMissRescueConfig = field(default_factory=NearMissRescueConfig)
 
 
 @dataclass
