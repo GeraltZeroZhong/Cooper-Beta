@@ -447,7 +447,9 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
 
     total_layers = int(report.get("total_layers", 0))
     total_scored_layers = int(report.get("total_scored_layers", 0))
+    valid_layers = int(report.get("valid_layers", 0))
     avg_radius = float(report.get("avg_radius", 0.0))
+    layer_details = list(report.get("layer_details", []) or [])
     scored_layer_frac = (total_scored_layers / total_layers) if total_layers else 0.0
     enough_scored_layers = True
     if decision_cfg.use_adjusted_score:
@@ -491,10 +493,86 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
         )
     )
 
-    is_barrel = (enough_scored_layers or rescued_small_barrel) and (
-        final_score >= decision_cfg.barrel_valid_ratio
+    near_miss_cfg = decision_cfg.near_miss_rescue
+    soft_nn_layers = 0
+    if near_miss_cfg.enabled and near_miss_cfg.soft_nn_enabled:
+        angle_cfg = cfg.analyzer.rules.angle
+        for layer in layer_details:
+            if layer.get("reason") != "JUNK(irregular nearest-neighbor spacing)":
+                continue
+            nn_inlier_frac = layer.get("nn_inlier_frac")
+            nn_cv = layer.get("nn_cv")
+            angle_gap = layer.get("angle_max_gap_deg")
+            order_local = layer.get("order_local_frac")
+            order_mean_circ = layer.get("order_mean_circ_dist_norm")
+            if (
+                nn_inlier_frac is not None
+                and nn_cv is not None
+                and angle_gap is not None
+                and order_local is not None
+                and order_mean_circ is not None
+                and float(nn_inlier_frac) >= float(near_miss_cfg.soft_nn_min_inlier_frac)
+                and float(nn_cv) <= float(near_miss_cfg.soft_nn_max_robust_cv)
+                and float(angle_gap) <= float(angle_cfg.max_gap_deg)
+                and float(order_local) >= float(angle_cfg.order.min_local_frac)
+                and float(order_mean_circ)
+                <= float(angle_cfg.order.max_mean_circ_dist_norm)
+            ):
+                soft_nn_layers += 1
+
+    rescued_near_miss = (
+        decision_cfg.use_adjusted_score
+        and bool(near_miss_cfg.enabled)
+        and (
+            (
+                bool(near_miss_cfg.soft_nn_enabled)
+                and total_scored_layers == 0
+                and soft_nn_layers >= int(near_miss_cfg.soft_nn_min_layers)
+                and total_layers >= int(near_miss_cfg.soft_nn_min_total_layers)
+                and total_layers <= int(near_miss_cfg.soft_nn_max_total_layers)
+                and chain_residue_count >= int(near_miss_cfg.soft_nn_min_chain_residues)
+                and chain_residue_count <= int(near_miss_cfg.soft_nn_max_chain_residues)
+                and sheet_residue_count >= int(near_miss_cfg.soft_nn_min_sheet_residues)
+                and sheet_residue_count <= int(near_miss_cfg.soft_nn_max_sheet_residues)
+            )
+            or (
+                bool(near_miss_cfg.compact_partner_enabled)
+                and final_score >= float(near_miss_cfg.compact_partner_min_score)
+                and valid_layers >= int(near_miss_cfg.compact_partner_min_valid_layers)
+                and total_scored_layers
+                >= int(near_miss_cfg.compact_partner_min_scored_layers)
+                and total_layers >= int(near_miss_cfg.compact_partner_min_total_layers)
+                and total_layers <= int(near_miss_cfg.compact_partner_max_total_layers)
+                and chain_residue_count
+                >= int(near_miss_cfg.compact_partner_min_chain_residues)
+                and chain_residue_count
+                <= int(near_miss_cfg.compact_partner_max_chain_residues)
+                and sheet_residue_count
+                >= int(near_miss_cfg.compact_partner_min_sheet_residues)
+                and sheet_residue_count
+                <= int(near_miss_cfg.compact_partner_max_sheet_residues)
+                and avg_radius >= float(near_miss_cfg.compact_partner_min_avg_radius)
+                and avg_radius <= float(near_miss_cfg.compact_partner_max_avg_radius)
+            )
+            or (
+                bool(near_miss_cfg.large_partner_enabled)
+                and final_score >= float(near_miss_cfg.large_partner_min_score)
+                and valid_layers >= int(near_miss_cfg.large_partner_min_valid_layers)
+                and total_scored_layers >= int(near_miss_cfg.large_partner_min_scored_layers)
+                and total_layers >= int(near_miss_cfg.large_partner_min_total_layers)
+                and chain_residue_count >= int(near_miss_cfg.large_partner_min_chain_residues)
+                and sheet_residue_count >= int(near_miss_cfg.large_partner_min_sheet_residues)
+                and avg_radius >= float(near_miss_cfg.large_partner_min_avg_radius)
+                and avg_radius <= float(near_miss_cfg.large_partner_max_avg_radius)
+            )
+        )
     )
-    layer_details = list(report.get("layer_details", []) or [])
+
+    threshold_pass = final_score >= decision_cfg.barrel_valid_ratio
+    is_barrel = (
+        ((enough_scored_layers or rescued_small_barrel) and threshold_pass)
+        or rescued_near_miss
+    )
 
     invalid_reasons: list[str] = []
     junk_reasons: list[str] = []

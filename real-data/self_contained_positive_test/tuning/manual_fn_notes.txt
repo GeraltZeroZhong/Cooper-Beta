@@ -20,6 +20,9 @@ Confirmed/likely mislabeled as positive, or non-target positives that should sta
 - 8GTK: incorrect positive annotation.
 - 5WC3: fake in this task's target definition. Interesting case: it forms a very large complex
   and may resemble a giant barrel-like protein complex, but it should not count as true here.
+- 5BUN: fake in this task's target definition, similar to 5WC3. Interesting case:
+  it forms a very large complex and may resemble a giant barrel-like protein complex,
+  but it should not count as true here.
 - Remaining unreviewed too-few-scored-layer FNs from the 2026-04-24 compact-rescue pass are
   incorrect positive annotations/fakes, except for the true positives listed below. Explicitly:
   8GTJ, 3ML3, 3MC8, 2QDF, 3SKP, 5B5R, 4RAP, 2X8X, 9IUG, 2V9H, 6CB8, 6SKI,
@@ -34,11 +37,16 @@ True positives worth trying, but not at the cost of false positives:
 - 2N6P: true positive, slightly difficult; try to rescue, but okay to leave if unsafe.
 - 1MM4: true positive.
 - 2MLH: true positive, expected to be relatively simple and worth investigating.
+  Rescued by the soft-NN near-miss rule on 2026-04-24.
+- 3JQO: true positive, but very difficult. Rescued by the compact-partner near-miss
+  rule on 2026-04-24 without adding adjusted false positives in the current review set.
+- 7LHI: very difficult true positive; rescued by the large-partner near-miss rule on
+  2026-04-24 without adding adjusted false positives in the current review set.
 
 True positives that are very hard; okay to ignore or abandon for now:
-- 7LHI: very difficult true positive; can be ignored if necessary.
-- 1Q9G: true positive, but structure has issues and is too difficult.
-- 6WUM: extremely difficult true positive; do not force rescue.
-- 6WUN: true positive, very difficult; can be abandoned for now.
-- 3JQO: true positive, but very difficult.
-- 5BUN: true positive, even harder than 3JQO.
+- 1Q9G: true positive, but structure has issues and is too difficult. Do not rescue for
+  the production heuristic; keep as a paper case-study failure.
+- 6WUM: extremely difficult true positive; do not force rescue. Keep as a paper
+  case-study failure.
+- 6WUN: true positive, very difficult; can be abandoned for now. Keep as a paper
+  case-study failure.

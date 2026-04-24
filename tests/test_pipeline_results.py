@@ -333,6 +333,180 @@ def test_analyze_chain_payload_rescues_sparse_high_confidence_barrel(
     assert row["scored_layers"] == 3
 
 
+def test_analyze_chain_payload_rescues_soft_nn_near_miss(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.near_miss_rescue.enabled = True
+    cfg.analyzer.decision.near_miss_rescue.soft_nn_enabled = True
+    cfg.analyzer.rules.angle.max_gap_deg = 160.0
+    cfg.analyzer.rules.angle.order.max_mean_circ_dist_norm = 0.10
+
+    payload = {
+        "filename": "soft-nn-barrel.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 69)
+            for index in range(238)
+        ],
+    }
+    soft_nn_layer = {
+        "reason": "JUNK(irregular nearest-neighbor spacing)",
+        "nn_inlier_frac": 0.714,
+        "nn_cv": 0.10,
+        "angle_max_gap_deg": 90.0,
+        "order_local_frac": 1.0,
+        "order_mean_circ_dist_norm": 0.0,
+    }
+    report = {
+        "score": 0.0,
+        "score_adjust": 0.0,
+        "valid_layers": 0,
+        "total_layers": 35,
+        "total_scored_layers": 0,
+        "avg_radius": 0.0,
+        "layer_details": [soft_nn_layer.copy() for _ in range(3)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=35)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_BARREL
+    assert row["reason"] == "OK"
+
+
+def test_analyze_chain_payload_does_not_soft_nn_rescue_scored_sparse_barrel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.near_miss_rescue.enabled = True
+    cfg.analyzer.decision.near_miss_rescue.soft_nn_enabled = True
+    cfg.analyzer.rules.angle.max_gap_deg = 160.0
+    cfg.analyzer.rules.angle.order.max_mean_circ_dist_norm = 0.10
+
+    payload = {
+        "filename": "sparse-should-stay-blocked.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 60)
+            for index in range(238)
+        ],
+    }
+    soft_nn_layer = {
+        "reason": "JUNK(irregular nearest-neighbor spacing)",
+        "nn_inlier_frac": 0.714,
+        "nn_cv": 0.10,
+        "angle_max_gap_deg": 90.0,
+        "order_local_frac": 1.0,
+        "order_mean_circ_dist_norm": 0.0,
+    }
+    report = {
+        "score": 4.0 / 35.0,
+        "score_adjust": 1.0,
+        "valid_layers": 4,
+        "total_layers": 35,
+        "total_scored_layers": 4,
+        "avg_radius": 7.5,
+        "layer_details": [soft_nn_layer.copy() for _ in range(3)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=35)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_NON_BARREL
+
+
+def test_analyze_chain_payload_rescues_compact_partner_near_miss(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.near_miss_rescue.enabled = True
+    cfg.analyzer.decision.near_miss_rescue.compact_partner_enabled = True
+
+    payload = {
+        "filename": "compact-partner.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 71)
+            for index in range(195)
+        ],
+    }
+    report = {
+        "score": 1.0 / 18.0,
+        "score_adjust": 0.5,
+        "valid_layers": 1,
+        "total_layers": 18,
+        "total_scored_layers": 2,
+        "avg_radius": 9.3,
+        "layer_details": [
+            {"reason": "OK"},
+            {"reason": "Local sequence/angle order mismatch"},
+        ],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=18)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_BARREL
+    assert row["reason"] == "OK"
+
+
+def test_analyze_chain_payload_rescues_large_partner_near_miss(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.625001
+    cfg.analyzer.decision.min_scored_layer_frac = 0.04
+    cfg.analyzer.decision.min_scored_layers = 7
+    cfg.analyzer.decision.near_miss_rescue.enabled = True
+    cfg.analyzer.decision.near_miss_rescue.large_partner_enabled = True
+
+    payload = {
+        "filename": "large-partner.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 256)
+            for index in range(724)
+        ],
+    }
+    report = {
+        "score": 16.0 / 65.0,
+        "score_adjust": 16.0 / 29.0,
+        "valid_layers": 16,
+        "total_layers": 65,
+        "total_scored_layers": 29,
+        "avg_radius": 20.0,
+        "layer_details": [{"reason": "OK"} for _ in range(16)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=65)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_BARREL
+    assert row["reason"] == "OK"
+
+
 def test_analyze_chain_payload_uses_raw_score_when_configured(monkeypatch: pytest.MonkeyPatch):
     cfg = AppConfig()
     cfg.input.min_chain_residues = 4
