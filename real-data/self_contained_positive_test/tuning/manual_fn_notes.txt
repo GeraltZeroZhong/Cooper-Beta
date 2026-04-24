@@ -1,0 +1,44 @@
+Manual notes for SELF_CONTAINED positive-set review
+Date: 2026-04-24
+
+These notes record user review of false negatives and likely mislabeled positives.
+They are local review notes for the real-data evaluation set.
+
+Known false-set label issues:
+- 1tow.pdb: true positive that was incorrectly placed in/labeled as the false set.
+  Rescued by the compact high-confidence small-barrel rule on 2026-04-24.
+
+Confirmed/likely mislabeled as positive, or non-target positives that should stay blocked:
+- 3Q54: sequence/angle order mismatch block is correct; sample is incorrectly labeled positive.
+- 4XGA: sequence/angle order mismatch block is correct; sample is incorrectly labeled positive.
+- Other sequence/angle order mismatch cases: generally good blocks unless reviewed otherwise.
+- 1CWV: correctly blocked; incorrectly labeled positive.
+- 2QCZ: fake/incorrect positive annotation.
+- 3V83: not actually a target positive.
+- 5QF3: incorrect positive annotation.
+- 5QF7: incorrect positive annotation.
+- 8GTK: incorrect positive annotation.
+- 5WC3: fake in this task's target definition. Interesting case: it forms a very large complex
+  and may resemble a giant barrel-like protein complex, but it should not count as true here.
+- Remaining unreviewed too-few-scored-layer FNs from the 2026-04-24 compact-rescue pass are
+  incorrect positive annotations/fakes, except for the true positives listed below. Explicitly:
+  8GTJ, 3ML3, 3MC8, 2QDF, 3SKP, 5B5R, 4RAP, 2X8X, 9IUG, 2V9H, 6CB8, 6SKI,
+  7FEB, 7FED, 2YH6, 3EFC, 4BZA, 5LX8, 7FEC.
+
+True positives already rescued:
+- 6QAM: relatively easy true positive; rescued by small-barrel high-confidence rule.
+- 1MM5: relatively easy true positive; rescued by small-barrel high-confidence rule.
+- 1Q9F: difficult true positive; rescued by small-barrel high-confidence rule.
+
+True positives worth trying, but not at the cost of false positives:
+- 2N6P: true positive, slightly difficult; try to rescue, but okay to leave if unsafe.
+- 1MM4: true positive.
+- 2MLH: true positive, expected to be relatively simple and worth investigating.
+
+True positives that are very hard; okay to ignore or abandon for now:
+- 7LHI: very difficult true positive; can be ignored if necessary.
+- 1Q9G: true positive, but structure has issues and is too difficult.
+- 6WUM: extremely difficult true positive; do not force rescue.
+- 6WUN: true positive, very difficult; can be abandoned for now.
+- 3JQO: true positive, but very difficult.
+- 5BUN: true positive, even harder than 3JQO.

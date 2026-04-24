@@ -70,12 +70,40 @@ class EllipseFitConfig:
 
 
 @dataclass
+class SmallBarrelRescueConfig:
+    enabled: bool = False
+    min_score: float = 0.999
+    min_scored_layers: int = 5
+    min_total_layers: int = 25
+    max_avg_radius: float = 10.5
+    compact_enabled: bool = False
+    compact_min_score: float = 0.999
+    compact_min_scored_layers: int = 4
+    compact_min_total_layers: int = 18
+    compact_max_total_layers: int = 24
+    compact_min_chain_residues: int = 120
+    compact_min_sheet_residues: int = 60
+    compact_max_avg_radius: float = 12.5
+    sparse_enabled: bool = False
+    sparse_min_score: float = 0.999
+    sparse_min_scored_layers: int = 3
+    sparse_min_total_layers: int = 30
+    sparse_min_chain_residues: int = 160
+    sparse_max_chain_residues: int = 190
+    sparse_min_sheet_residues: int = 70
+    sparse_max_avg_radius: float = 9.0
+
+
+@dataclass
 class DecisionConfig:
     barrel_valid_ratio: float = 0.529
     use_adjusted_score: bool = True
     min_intersections_for_scoring: int = 7
     min_scored_layer_frac: float = 0.20
     min_scored_layers: int = 9
+    small_barrel_rescue: SmallBarrelRescueConfig = field(
+        default_factory=SmallBarrelRescueConfig
+    )
 
 
 @dataclass
