@@ -4,6 +4,12 @@ Date: 2026-04-24
 These notes record user review of false negatives and likely mislabeled positives.
 They are local review notes for the real-data evaluation set.
 
+Current local dataset layout:
+- data/positive contains curated SELF_CONTAINED_* mpstruc positives, with confirmed
+  fake/non-target positive IDs below excluded from the local positive folder.
+- data/negative contains the balanced PISCES+CATH easy-negative set.
+- Structure files under data/ and old-data/ are local-only and intentionally ignored by git.
+
 Known false-set label issues:
 - 1tow.pdb: true positive that was incorrectly placed in/labeled as the false set.
   Rescued by the compact high-confidence small-barrel rule on 2026-04-24.
