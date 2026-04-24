@@ -12,10 +12,10 @@ fit:
     loss: soft_l1
     f_scale: 1.0
 decision:
-  barrel_valid_ratio: 0.625001
+  barrel_valid_ratio: 0.85
   use_adjusted_score: true
   min_intersections_for_scoring: 7
-  min_scored_layer_frac: 0.04
+  min_scored_layer_frac: 0.31
   min_scored_layers: 7
   small_barrel_rescue:
     enabled: true
@@ -32,13 +32,13 @@ decision:
     compact_min_sheet_residues: 60
     compact_max_avg_radius: 12.5
     sparse_enabled: true
-    sparse_min_score: 0.999
+    sparse_min_score: 0.85
     sparse_min_scored_layers: 3
-    sparse_min_total_layers: 30
+    sparse_min_total_layers: 35
     sparse_min_chain_residues: 160
-    sparse_max_chain_residues: 190
+    sparse_max_chain_residues: 1000
     sparse_min_sheet_residues: 70
-    sparse_max_avg_radius: 9.0
+    sparse_max_avg_radius: 35.0
   near_miss_rescue:
     enabled: true
     soft_nn_enabled: true
@@ -65,13 +65,20 @@ decision:
     compact_partner_max_avg_radius: 13.0
     large_partner_enabled: true
     large_partner_min_score: 0.55
-    large_partner_min_valid_layers: 16
-    large_partner_min_scored_layers: 25
-    large_partner_min_total_layers: 50
-    large_partner_min_chain_residues: 500
-    large_partner_min_sheet_residues: 200
-    large_partner_min_avg_radius: 15.0
-    large_partner_max_avg_radius: 25.0
+    large_partner_min_valid_layers: 11
+    large_partner_min_scored_layers: 14
+    large_partner_min_total_layers: 35
+    large_partner_min_chain_residues: 250
+    large_partner_min_sheet_residues: 140
+    large_partner_min_avg_radius: 0.0
+    large_partner_max_avg_radius: 26.0
+  low_sheet_wide_guard:
+    enabled: true
+    max_chain_residues: 220
+    max_sheet_residues: 100
+    min_avg_radius: 13.0
+    min_total_layers: 20
+    min_scored_layers: 7
 axis_search:
   enabled: true
   refine:

@@ -206,7 +206,46 @@ def test_analyze_chain_payload_requires_minimum_scored_layers(monkeypatch: pytes
     assert row["decision_score"] == pytest.approx(0.75)
     assert row["reason"] == (
         "Too few scored slices for a stable decision "
-        "(4/4 = 1.00, need > 0.20 and >= 5 layers)"
+        "(4/4 = 1.00, need > 0.31 and >= 5 layers)"
+    )
+
+
+def test_analyze_chain_payload_blocks_short_low_sheet_wide_radius(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.85
+    cfg.analyzer.decision.min_scored_layer_frac = 0.31
+    cfg.analyzer.decision.min_scored_layers = 7
+
+    payload = {
+        "filename": "wide-short-chain.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 86)
+            for index in range(174)
+        ],
+    }
+    report = {
+        "score": 15.0 / 26.0,
+        "score_adjust": 1.0,
+        "valid_layers": 15,
+        "total_layers": 26,
+        "total_scored_layers": 15,
+        "avg_radius": 16.5,
+        "layer_details": [{"reason": "OK"} for _ in range(15)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=26)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_NON_BARREL
+    assert row["decision_score"] == pytest.approx(1.0)
+    assert row["reason"].startswith(
+        "Short low-sheet chain has an unusually large fitted barrel radius"
     )
 
 

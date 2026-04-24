@@ -85,13 +85,13 @@ class SmallBarrelRescueConfig:
     compact_min_sheet_residues: int = 60
     compact_max_avg_radius: float = 12.5
     sparse_enabled: bool = False
-    sparse_min_score: float = 0.999
+    sparse_min_score: float = 0.85
     sparse_min_scored_layers: int = 3
-    sparse_min_total_layers: int = 30
+    sparse_min_total_layers: int = 35
     sparse_min_chain_residues: int = 160
-    sparse_max_chain_residues: int = 190
+    sparse_max_chain_residues: int = 1000
     sparse_min_sheet_residues: int = 70
-    sparse_max_avg_radius: float = 9.0
+    sparse_max_avg_radius: float = 35.0
 
 
 @dataclass
@@ -121,26 +121,39 @@ class NearMissRescueConfig:
     compact_partner_max_avg_radius: float = 13.0
     large_partner_enabled: bool = False
     large_partner_min_score: float = 0.55
-    large_partner_min_valid_layers: int = 16
-    large_partner_min_scored_layers: int = 25
-    large_partner_min_total_layers: int = 50
-    large_partner_min_chain_residues: int = 500
-    large_partner_min_sheet_residues: int = 200
-    large_partner_min_avg_radius: float = 15.0
-    large_partner_max_avg_radius: float = 25.0
+    large_partner_min_valid_layers: int = 11
+    large_partner_min_scored_layers: int = 14
+    large_partner_min_total_layers: int = 35
+    large_partner_min_chain_residues: int = 250
+    large_partner_min_sheet_residues: int = 140
+    large_partner_min_avg_radius: float = 0.0
+    large_partner_max_avg_radius: float = 26.0
+
+
+@dataclass
+class LowSheetWideGuardConfig:
+    enabled: bool = True
+    max_chain_residues: int = 220
+    max_sheet_residues: int = 100
+    min_avg_radius: float = 13.0
+    min_total_layers: int = 20
+    min_scored_layers: int = 7
 
 
 @dataclass
 class DecisionConfig:
-    barrel_valid_ratio: float = 0.529
+    barrel_valid_ratio: float = 0.85
     use_adjusted_score: bool = True
     min_intersections_for_scoring: int = 7
-    min_scored_layer_frac: float = 0.20
+    min_scored_layer_frac: float = 0.31
     min_scored_layers: int = 9
     small_barrel_rescue: SmallBarrelRescueConfig = field(
         default_factory=SmallBarrelRescueConfig
     )
     near_miss_rescue: NearMissRescueConfig = field(default_factory=NearMissRescueConfig)
+    low_sheet_wide_guard: LowSheetWideGuardConfig = field(
+        default_factory=LowSheetWideGuardConfig
+    )
 
 
 @dataclass
