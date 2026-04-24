@@ -17,6 +17,7 @@ decision:
   min_intersections_for_scoring: 7
   min_scored_layer_frac: 0.31
   min_scored_layers: 7
+  exception_layer_enabled: true
   small_barrel_rescue:
     enabled: true
     min_score: 0.999

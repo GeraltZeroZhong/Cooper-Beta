@@ -147,6 +147,7 @@ class DecisionConfig:
     min_intersections_for_scoring: int = 7
     min_scored_layer_frac: float = 0.31
     min_scored_layers: int = 9
+    exception_layer_enabled: bool = True
     small_barrel_rescue: SmallBarrelRescueConfig = field(
         default_factory=SmallBarrelRescueConfig
     )
@@ -239,6 +240,10 @@ LEGACY_OVERRIDE_PATHS = {
     "USE_ADJUSTED_SCORE": "analyzer.decision.use_adjusted_score",
     "MIN_SCORED_LAYER_FRAC": "analyzer.decision.min_scored_layer_frac",
     "MIN_SCORED_LAYERS": "analyzer.decision.min_scored_layers",
+    "EXCEPTION_LAYER_ENABLED": "analyzer.decision.exception_layer_enabled",
+    "SMALL_BARREL_RESCUE_ENABLED": "analyzer.decision.small_barrel_rescue.enabled",
+    "NEAR_MISS_RESCUE_ENABLED": "analyzer.decision.near_miss_rescue.enabled",
+    "LOW_SHEET_WIDE_GUARD_ENABLED": "analyzer.decision.low_sheet_wide_guard.enabled",
     "AXIS_SEARCH_ENABLED": "analyzer.axis_search.enabled",
     "AXIS_SEARCH_REFINE_ENABLED": "analyzer.axis_search.refine.enabled",
     "AXIS_SEARCH_REFINE_ANGLE_DEG": "analyzer.axis_search.refine.angle_deg",

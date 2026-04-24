@@ -19,38 +19,47 @@ def ablation_suite() -> list[tuple[str, dict[str, object]]]:
         "NN_FAIL_AS_JUNK": False,
         "ANGLE_RULE_ENABLED": False,
         "ANGLE_ORDER_RULE_ENABLED": False,
+        "EXCEPTION_LAYER_ENABLED": False,
     }
+
+    def variant(
+        *,
+        adjusted: bool = False,
+        nn: bool = False,
+        angle: bool = False,
+        exception_layer: bool = False,
+    ) -> dict[str, object]:
+        return {
+            **base,
+            "USE_ADJUSTED_SCORE": adjusted,
+            "NN_RULE_ENABLED": nn,
+            "NN_FAIL_AS_JUNK": nn,
+            "ANGLE_RULE_ENABLED": angle,
+            "ANGLE_ORDER_RULE_ENABLED": angle,
+            "EXCEPTION_LAYER_ENABLED": exception_layer,
+        }
+
     return [
-        ("A0_baseline_ellipse", base),
-        ("A1_nn_only", {**base, "NN_RULE_ENABLED": True, "NN_FAIL_AS_JUNK": True}),
-        ("A2_adjusted_only", {**base, "USE_ADJUSTED_SCORE": True}),
+        ("A0_raw_ellipse_baseline", variant()),
+        ("A1_raw_plus_nn", variant(nn=True)),
+        ("A2_raw_plus_angle", variant(angle=True)),
+        ("A3_raw_plus_nn_angle", variant(nn=True, angle=True)),
+        ("A4_adjusted_only", variant(adjusted=True)),
+        ("A5_adjusted_plus_nn", variant(adjusted=True, nn=True)),
+        ("A6_adjusted_plus_angle", variant(adjusted=True, angle=True)),
+        ("A7_core_full", variant(adjusted=True, nn=True, angle=True)),
+        ("A8_adjusted_plus_exception", variant(adjusted=True, exception_layer=True)),
         (
-            "A3_angle_only",
-            {**base, "ANGLE_RULE_ENABLED": True, "ANGLE_ORDER_RULE_ENABLED": True},
+            "A9_adjusted_nn_exception",
+            variant(adjusted=True, nn=True, exception_layer=True),
         ),
         (
-            "A4_adjusted_plus_nn",
-            {**base, "USE_ADJUSTED_SCORE": True, "NN_RULE_ENABLED": True, "NN_FAIL_AS_JUNK": True},
+            "A10_adjusted_angle_exception",
+            variant(adjusted=True, angle=True, exception_layer=True),
         ),
         (
-            "A5_adjusted_plus_angle",
-            {
-                **base,
-                "USE_ADJUSTED_SCORE": True,
-                "ANGLE_RULE_ENABLED": True,
-                "ANGLE_ORDER_RULE_ENABLED": True,
-            },
-        ),
-        (
-            "A6_full",
-            {
-                **base,
-                "USE_ADJUSTED_SCORE": True,
-                "NN_RULE_ENABLED": True,
-                "NN_FAIL_AS_JUNK": True,
-                "ANGLE_RULE_ENABLED": True,
-                "ANGLE_ORDER_RULE_ENABLED": True,
-            },
+            "A11_production_full",
+            variant(adjusted=True, nn=True, angle=True, exception_layer=True),
         ),
     ]
 
@@ -98,7 +107,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--ablation",
         action="store_true",
-        help="Run the 7-experiment ablation suite and write a summary CSV.",
+        help="Run the 12-experiment ablation suite and write a summary CSV.",
     )
     args = parser.parse_args(argv)
 
@@ -126,7 +135,7 @@ def main(argv: list[str] | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict[str, object]] = []
-    print("\n=== Ablation study (7 exps: main effects & interactions) ===")
+    print("\n=== Ablation study (12 exps: core components + exception layer) ===")
     print(f"Output dir: {output_dir}\n")
 
     for experiment_name, overrides in ablation_suite():
@@ -149,16 +158,22 @@ def main(argv: list[str] | None = None) -> None:
         if row.get("chain_f1") is not None:
             summary_parts.append(
                 "chain: "
+                f"R={row['chain_recall']:.4f}  "
+                f"P={row['chain_precision']:.4f}  "
                 f"F1={row['chain_f1']:.4f}  "
                 f"BalAcc={row['chain_balanced_accuracy']:.4f}  "
+                f"MCC={row['chain_mcc']:.4f}  "
                 f"(TP={row['chain_TP']} FP={row['chain_FP']} "
                 f"TN={row['chain_TN']} FN={row['chain_FN']})"
             )
         if row.get("file_f1") is not None:
             summary_parts.append(
                 "file: "
+                f"R={row['file_recall']:.4f}  "
+                f"P={row['file_precision']:.4f}  "
                 f"F1={row['file_f1']:.4f}  "
                 f"BalAcc={row['file_balanced_accuracy']:.4f}  "
+                f"MCC={row['file_mcc']:.4f}  "
                 f"(TP={row['file_TP']} FP={row['file_FP']} "
                 f"TN={row['file_TN']} FN={row['file_FN']})"
             )
@@ -170,26 +185,32 @@ def main(argv: list[str] | None = None) -> None:
     dataframe = pd.DataFrame(rows)
     preferred_columns = [
         "exp",
+        "USE_ADJUSTED_SCORE",
+        "NN_RULE_ENABLED",
+        "ANGLE_RULE_ENABLED",
+        "EXCEPTION_LAYER_ENABLED",
         "chain_recall",
         "chain_precision",
-        "chain_f1",
         "chain_specificity",
-        "chain_accuracy",
+        "chain_f1",
         "chain_balanced_accuracy",
-        "file_recall",
-        "file_precision",
-        "file_f1",
-        "file_specificity",
-        "file_accuracy",
-        "file_balanced_accuracy",
+        "chain_mcc",
         "chain_TP",
         "chain_FP",
         "chain_TN",
         "chain_FN",
+        "file_recall",
+        "file_precision",
+        "file_specificity",
+        "file_f1",
+        "file_balanced_accuracy",
+        "file_mcc",
         "file_TP",
         "file_FP",
         "file_TN",
         "file_FN",
+        "chain_accuracy",
+        "file_accuracy",
         "chain_csv",
         "file_csv",
     ]
@@ -205,10 +226,26 @@ def main(argv: list[str] | None = None) -> None:
         column
         for column in [
             "exp",
+            "chain_recall",
+            "chain_precision",
+            "chain_specificity",
             "chain_f1",
             "chain_balanced_accuracy",
+            "chain_mcc",
+            "chain_TP",
+            "chain_FP",
+            "chain_TN",
+            "chain_FN",
+            "file_recall",
+            "file_precision",
+            "file_specificity",
             "file_f1",
             "file_balanced_accuracy",
+            "file_mcc",
+            "file_TP",
+            "file_FP",
+            "file_TN",
+            "file_FN",
         ]
         if column in dataframe.columns
     ]
