@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 try:
     import pandas as pd
 except Exception:
@@ -55,6 +57,10 @@ def compute_confusion_metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, f
     accuracy = safe_div(tp + tn, tp + tn + fp + fn)
     f1 = safe_div(2 * precision * recall, precision + recall)
     balanced_accuracy = 0.5 * (recall + specificity)
+    mcc_denominator = math.sqrt(
+        float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    )
+    mcc = safe_div((tp * tn) - (fp * fn), mcc_denominator)
     return {
         "TP": tp,
         "FP": fp,
@@ -66,6 +72,7 @@ def compute_confusion_metrics(tp: int, fp: int, tn: int, fn: int) -> dict[str, f
         "specificity": specificity,
         "accuracy": accuracy,
         "balanced_accuracy": balanced_accuracy,
+        "mcc": mcc,
     }
 
 
@@ -81,7 +88,8 @@ def print_metrics(title: str, metrics: dict[str, float | int]) -> None:
     print(f"  F1          : {metrics['f1']:.4f}")
     print(f"  Specificity : {metrics['specificity']:.4f}")
     print(f"  Accuracy    : {metrics['accuracy']:.4f}")
-    print(f"  Bal. Acc.   : {metrics['balanced_accuracy']:.4f}\n")
+    print(f"  Bal. Acc.   : {metrics['balanced_accuracy']:.4f}")
+    print(f"  MCC         : {metrics['mcc']:.4f}\n")
 
 
 def compute_chain_metrics(

@@ -451,6 +451,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     avg_radius = float(report.get("avg_radius", 0.0))
     layer_details = list(report.get("layer_details", []) or [])
     scored_layer_frac = (total_scored_layers / total_layers) if total_layers else 0.0
+    exceptions_enabled = bool(decision_cfg.exception_layer_enabled)
     enough_scored_layers = True
     if decision_cfg.use_adjusted_score:
         enough_scored_layers = (total_layers > 0) and (
@@ -461,6 +462,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     rescue_cfg = decision_cfg.small_barrel_rescue
     rescued_small_barrel = (
         decision_cfg.use_adjusted_score
+        and exceptions_enabled
         and (not enough_scored_layers)
         and bool(rescue_cfg.enabled)
         and (
@@ -495,7 +497,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
 
     near_miss_cfg = decision_cfg.near_miss_rescue
     soft_nn_layers = 0
-    if near_miss_cfg.enabled and near_miss_cfg.soft_nn_enabled:
+    if exceptions_enabled and near_miss_cfg.enabled and near_miss_cfg.soft_nn_enabled:
         angle_cfg = cfg.analyzer.rules.angle
         for layer in layer_details:
             if layer.get("reason") != "JUNK(irregular nearest-neighbor spacing)":
@@ -522,6 +524,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
 
     rescued_near_miss = (
         decision_cfg.use_adjusted_score
+        and exceptions_enabled
         and bool(near_miss_cfg.enabled)
         and (
             (
@@ -571,6 +574,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     guard_cfg = decision_cfg.low_sheet_wide_guard
     blocked_low_sheet_wide = (
         decision_cfg.use_adjusted_score
+        and exceptions_enabled
         and bool(guard_cfg.enabled)
         and chain_residue_count <= int(guard_cfg.max_chain_residues)
         and sheet_residue_count <= int(guard_cfg.max_sheet_residues)
