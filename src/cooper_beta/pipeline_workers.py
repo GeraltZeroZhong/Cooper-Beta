@@ -568,11 +568,23 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
         )
     )
 
+    guard_cfg = decision_cfg.low_sheet_wide_guard
+    blocked_low_sheet_wide = (
+        decision_cfg.use_adjusted_score
+        and bool(guard_cfg.enabled)
+        and chain_residue_count <= int(guard_cfg.max_chain_residues)
+        and sheet_residue_count <= int(guard_cfg.max_sheet_residues)
+        and total_layers >= int(guard_cfg.min_total_layers)
+        and total_scored_layers >= int(guard_cfg.min_scored_layers)
+        and avg_radius >= float(guard_cfg.min_avg_radius)
+    )
+
     threshold_pass = final_score >= decision_cfg.barrel_valid_ratio
-    is_barrel = (
+    passes_barrel_decision = (
         ((enough_scored_layers or rescued_small_barrel) and threshold_pass)
         or rescued_near_miss
     )
+    is_barrel = passes_barrel_decision and not blocked_low_sheet_wide
 
     invalid_reasons: list[str] = []
     junk_reasons: list[str] = []
@@ -611,6 +623,13 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
 
     if is_barrel:
         reason = "OK"
+    elif passes_barrel_decision and blocked_low_sheet_wide:
+        reason = (
+            "Short low-sheet chain has an unusually large fitted barrel radius "
+            f"(chain residues {chain_residue_count} <= {int(guard_cfg.max_chain_residues)}, "
+            f"sheet residues {sheet_residue_count} <= {int(guard_cfg.max_sheet_residues)}, "
+            f"avg radius {avg_radius:.2f} >= {float(guard_cfg.min_avg_radius):.2f})"
+        )
     elif not enough_scored_layers:
         reason = (
             "Too few scored slices for a stable decision "
