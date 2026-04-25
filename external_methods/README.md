@@ -18,3 +18,6 @@ Current adapters:
 - `isitabarrel_structure_map`: structure-derived contact-map baseline.
 - `pred_tmbb2_single_juchmme`: sequence-only topology baseline using an
   external JUCHMME/PRED-TMBB2 checkout.
+- `foldseek_tmalign_structure_search`: structure-search baseline using an
+  external Foldseek binary in global TMalign mode against a curated reference
+  barrel-chain database.

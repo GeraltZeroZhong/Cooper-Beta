@@ -15,3 +15,7 @@ BFVD/
 eval_outputs/
 real-data/
 old-data/
+tools/foldseek/
+tools/foldseek-linux-*.tar.gz
+__pycache__/
+*.py[cod]

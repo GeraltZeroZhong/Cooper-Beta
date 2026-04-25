@@ -6,6 +6,7 @@ include scripts/setup_env.sh
 recursive-include tests *.py
 exclude tests/test_external_isitabarrel.py
 exclude tests/test_external_pred_tmbb2.py
+exclude tests/test_external_foldseek.py
 recursive-include src/cooper_beta/conf *.yaml
 recursive-exclude data/external_methods *
 recursive-exclude external_methods *
