@@ -5,6 +5,7 @@ import os
 from collections import Counter
 from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -32,13 +33,35 @@ DEFAULT_ANALYSIS_BATCH_SIZE = 64
 PREPARE_IN_FLIGHT_MULTIPLIER = 2
 ANALYSIS_IN_FLIGHT_MULTIPLIER = 2
 
+
+@dataclass(frozen=True)
+class PrepareFailure:
+    message: str
+
 try:
     from tqdm.auto import tqdm
 
     tqdm_write = tqdm.write
 except Exception:  # pragma: no cover
+    class _NullProgress:
+        def __init__(self, iterable=None, **kwargs):
+            del kwargs
+            self.iterable = iterable
+
+        def __iter__(self):
+            return iter(self.iterable or [])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            del exc_type, exc, traceback
+
+        def update(self, value: int = 1) -> None:
+            del value
+
     def tqdm(iterable=None, **kwargs):
-        return iterable if iterable is not None else []
+        return _NullProgress(iterable, **kwargs)
 
     def tqdm_write(message: str) -> None:
         print(message)
@@ -658,7 +681,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     )
 
 
-def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] | dict[str, str]:
+def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] | PrepareFailure:
     """
     Parse a structure once, run DSSP once, and produce per-chain payloads.
     """
@@ -674,7 +697,7 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
             fail_on_dssp_error=cfg.runtime.fail_on_dssp_error,
         )
     except Exception as exc:
-        return {"_error": f"{filename}: {exc}"}
+        return PrepareFailure(f"{filename}: {exc}")
 
     payloads: list[dict[str, object]] = []
     for chain in loader.model:
@@ -682,7 +705,7 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
         try:
             residues_data = loader.get_chain_data(chain_id)
         except Exception as exc:
-            return {"_error": f"{filename}: {exc}"}
+            return PrepareFailure(f"{filename}: {exc}")
 
         payloads.append(
             {
@@ -737,6 +760,9 @@ def prepare_file_batch(file_paths: list[str], cfg: AppConfig) -> dict[str, objec
 
     for file_path in file_paths:
         result = prepare_one_file(file_path, cfg)
+        if isinstance(result, PrepareFailure):
+            errors.append(result.message)
+            continue
         if isinstance(result, dict) and result.get("_error"):
             errors.append(str(result["_error"]))
             continue
@@ -753,6 +779,9 @@ def iter_prepared_payload_batches(
     files: Iterable[str],
     cfg: AppConfig,
     prepare_workers: int,
+    *,
+    on_errors: Callable[[list[str]], None] | None = None,
+    show_progress: bool = True,
 ) -> Iterable[list[dict[str, object]]]:
     """
     Run the preparation phase and yield chain-level payload batches as they complete.
@@ -761,11 +790,21 @@ def iter_prepared_payload_batches(
 
     if prepare_workers <= 1:
         batch_size = _resolve_prepare_batch_size(cfg)
-        with tqdm(total=len(file_list), desc="Preparing", unit="file") as progress_bar:
+        with tqdm(
+            total=len(file_list),
+            desc="Preparing",
+            unit="file",
+            disable=not show_progress,
+        ) as progress_bar:
             for file_batch in _iter_file_batches(file_list, batch_size):
                 result = prepare_file_batch(file_batch, cfg)
-                for error in result.get("errors", []):
-                    tqdm_write(f"  [X] Load failed: {error}")
+                errors = [str(error) for error in result.get("errors", [])]
+                if errors:
+                    if on_errors is not None:
+                        on_errors(errors)
+                    if show_progress:
+                        for error in errors:
+                            tqdm_write(f"  [X] Load failed: {error}")
                 progress_bar.update(int(result.get("processed", len(file_batch))))
                 payload_batch = result.get("payloads", [])
                 if payload_batch:
@@ -793,7 +832,12 @@ def iter_prepared_payload_batches(
             if not submit_next_batch():
                 break
 
-        with tqdm(total=len(file_list), desc="Preparing", unit="file") as progress_bar:
+        with tqdm(
+            total=len(file_list),
+            desc="Preparing",
+            unit="file",
+            disable=not show_progress,
+        ) as progress_bar:
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
@@ -802,10 +846,19 @@ def iter_prepared_payload_batches(
                     try:
                         result = future.result()
                     except Exception as exc:
-                        tqdm_write(f"  [X] Prepare worker failed: {exc}")
+                        errors = [f"Prepare worker failed: {exc}"]
+                        if on_errors is not None:
+                            on_errors(errors)
+                        if show_progress:
+                            tqdm_write(f"  [X] {errors[0]}")
                     else:
-                        for error in result.get("errors", []):
-                            tqdm_write(f"  [X] Load failed: {error}")
+                        errors = [str(error) for error in result.get("errors", [])]
+                        if errors:
+                            if on_errors is not None:
+                                on_errors(errors)
+                            if show_progress:
+                                for error in errors:
+                                    tqdm_write(f"  [X] Load failed: {error}")
                         completed_count = int(result.get("processed", completed_count))
                         payload_batch = result.get("payloads", [])
                     finally:
@@ -822,12 +875,19 @@ def collect_payloads(
     files: Iterable[str],
     cfg: AppConfig,
     prepare_workers: int,
+    *,
+    show_progress: bool = True,
 ) -> list[dict[str, object]]:
     """
     Run the preparation phase and collect chain-level payloads.
     """
     payloads: list[dict[str, object]] = []
-    for payload_batch in iter_prepared_payload_batches(files, cfg, prepare_workers):
+    for payload_batch in iter_prepared_payload_batches(
+        files,
+        cfg,
+        prepare_workers,
+        show_progress=show_progress,
+    ):
         payloads.extend(payload_batch)
     return payloads
 
@@ -859,6 +919,7 @@ def run_analysis_stream(
     workers: int,
     *,
     on_results: Callable[[list[dict[str, object]]], None] | None = None,
+    show_progress: bool = True,
 ) -> list[dict[str, object]]:
     """
     Analyze payload batches with bounded in-flight work.
@@ -877,7 +938,7 @@ def run_analysis_stream(
         progress_bar.update(len(rows))
 
     if workers <= 1:
-        with tqdm(desc="Analyzing", unit="chain") as progress_bar:
+        with tqdm(desc="Analyzing", unit="chain", disable=not show_progress) as progress_bar:
             for payload_group in payload_batches:
                 for payload_batch in _iter_payload_batches(payload_group, batch_size):
                     handle_rows(analyze_payload_batch(payload_batch, cfg), progress_bar)
@@ -888,7 +949,7 @@ def run_analysis_stream(
     future_sizes: dict[Future, int] = {}
 
     with ProcessPoolExecutor(max_workers=workers) as executor:
-        with tqdm(desc="Analyzing", unit="chain") as progress_bar:
+        with tqdm(desc="Analyzing", unit="chain", disable=not show_progress) as progress_bar:
             def drain_completed(done: set[Future]) -> None:
                 for future in done:
                     submitted_count = future_sizes.pop(future, 0)

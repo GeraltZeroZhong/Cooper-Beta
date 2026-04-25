@@ -5,6 +5,7 @@ import shutil
 import sys
 
 from .config import Config
+from .exceptions import DsspNotFoundError
 
 
 def _resolve_executable(candidate: str | None) -> str | None:
@@ -37,12 +38,14 @@ def dssp_requirement_message() -> str:
 def require_dssp_binary(explicit_path: str | None = None) -> str:
     dssp_bin = find_dssp_binary(explicit_path)
     if not dssp_bin:
-        raise RuntimeError(dssp_requirement_message())
+        raise DsspNotFoundError(dssp_requirement_message())
     return dssp_bin
 
 
-def runtime_summary(explicit_path: str | None = None) -> dict[str, str]:
+def runtime_summary(explicit_path: str | None = None, *, require_dssp: bool = True) -> dict[str, str]:
+    dssp_path = require_dssp_binary(explicit_path) if require_dssp else find_dssp_binary(explicit_path)
     return {
         "python": sys.version.split()[0],
-        "dssp": require_dssp_binary(explicit_path),
+        "python_executable": sys.executable,
+        "dssp": dssp_path or "not found",
     }

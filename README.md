@@ -3,12 +3,12 @@
 Cooper-Beta detects beta-barrel-like protein chains in PDB, CIF, and mmCIF
 structures. It parses structures with Biopython, runs DSSP, slices beta-sheet
 C-alpha coordinates, fits ellipses to cross sections, applies geometric
-consistency rules, and writes a chain-level CSV.
+consistency rules, and returns chain-level results.
 
 ## Quick Start
 
-Cooper-Beta requires Python 3.10 or newer and a DSSP executable
-(`mkdssp` or `dssp`) on `PATH`.
+Cooper-Beta requires Python 3.10 or newer and a DSSP executable (`mkdssp` or
+`dssp`) on `PATH`.
 
 ```bash
 pip install cooper-beta
@@ -16,14 +16,8 @@ cooper-beta --check-env
 cooper-beta path/to/structures --out cooper_beta_results.csv
 ```
 
-For a source checkout:
-
-```bash
-pip install -e ".[full]"
-cooper-beta path/to/structures --workers 8 --prepare-workers 8
-```
-
-If DSSP is not on `PATH`, pass its location with Hydra-style overrides:
+If DSSP is installed outside `PATH`, pass its location as a configuration
+override:
 
 ```bash
 cooper-beta path/to/structures runtime.dssp_bin_path=/absolute/path/to/mkdssp
@@ -31,79 +25,132 @@ cooper-beta path/to/structures runtime.dssp_bin_path=/absolute/path/to/mkdssp
 
 ## Installation
 
-Install from PyPI:
+Install the detector:
 
 ```bash
 pip install cooper-beta
 ```
 
-Install optional evaluation and progress-reporting dependencies:
+Install optional tools:
 
 ```bash
-pip install "cooper-beta[full]"
+pip install "cooper-beta[eval]"   # pandas for evaluation helpers
+pip install "cooper-beta[full]"   # all optional extras
 ```
 
-Install development tools from a source checkout:
+For development from a source checkout:
 
 ```bash
 pip install -e ".[full,dev]"
 ```
 
-This repository also includes `environment.yml` and `scripts/setup_env.sh` for a
-Conda/Mamba environment that installs DSSP from `conda-forge`:
+The repository also includes `environment.yml` and `scripts/setup_env.sh` for a
+Conda or Mamba environment that installs DSSP from `conda-forge`:
 
 ```bash
 bash scripts/setup_env.sh --dev
 ```
 
-## Minimal Examples
+## Command Line
 
-Command line:
+Run Cooper-Beta on a single file or a directory:
 
 ```bash
-cooper-beta data/ --out results.csv
-python -m cooper_beta data/ runtime.workers=4 output.csv_path=results.csv
+cooper-beta path/to/structure.cif --out results.csv
+cooper-beta path/to/structures --workers 8 --prepare-workers 8 --out results.csv
 ```
 
-Python:
+Useful options:
+
+- `--check-env`: print the Python executable and resolved DSSP executable.
+- `--workers`: number of analysis worker processes.
+- `--prepare-workers`: number of structure-preparation worker processes.
+- `--out`: output CSV path.
+- `--version`: print the installed Cooper-Beta version.
+
+Advanced configuration uses Hydra-style `KEY=VALUE` overrides:
+
+```bash
+cooper-beta path/to/structures \
+  runtime.dssp_bin_path=/absolute/path/to/mkdssp \
+  analyzer.rules.angle.max_gap_deg=160 \
+  output.summary_limit=-1
+```
+
+## Python API
+
+The recommended Python entry point is `detect`, which returns a structured
+`PipelineRunResult`. CSV output is written only when `output` is provided or
+`write_csv=True`.
 
 ```python
-from cooper_beta import build_config, main
+from cooper_beta import detect
 
-cfg = build_config({"runtime.dssp_bin_path": "/usr/bin/mkdssp"})
-rows = main("path/to/structures", workers=4, out_csv="results.csv", cfg=cfg)
-print(rows[0])
+run = detect(
+    "path/to/structures",
+    workers=4,
+    output="results.csv",
+    overrides={"runtime.dssp_bin_path": "/usr/bin/mkdssp"},
+)
+
+print(run.result_counts)
+for row in run.rows:
+    print(row.filename, row.chain, row.result, row.reason)
 ```
 
-## Main API
+Public interfaces:
 
-- `cooper_beta.main(...)`: run the full detection pipeline.
-- `cooper_beta.build_config(...)`: build an `AppConfig` from Hydra-style or
-  legacy overrides.
+- `cooper_beta.detect(...)`: run detection and return structured results.
+- `cooper_beta.main(...)`: backward-compatible entry point returning row dicts.
+- `cooper_beta.build_config(...)`: build an `AppConfig` from overrides.
+- `cooper_beta.PipelineRunResult`: complete run result with `rows`,
+  `input_files`, `output_path`, and `result_counts`.
+- `cooper_beta.DetectionResult`: one chain-level result row.
 - `cooper_beta.ProteinLoader`: parse structures and collect per-chain C-alpha
   and DSSP annotations.
-- `cooper_beta.PCAAligner`: align chain coordinates with PCA.
-- `cooper_beta.ProteinSlicer`: convert aligned beta-sheet segments into slice
-  intersections.
-- `cooper_beta.BarrelAnalyzer`: score slice geometry and produce per-layer
-  diagnostics.
+- `cooper_beta.PCAAligner`, `ProteinSlicer`, and `BarrelAnalyzer`: lower-level
+  analysis components for custom workflows.
 
-The CLI accepts both legacy shortcuts (`--workers`, `--prepare-workers`, `--out`)
-and Hydra-style overrides such as `analyzer.rules.angle.max_gap_deg=160`.
-Large directory runs use bounded prepare/analysis batches and write the output
-CSV incrementally. The console summary is capped by default; set
-`output.summary_limit=-1` to print every row.
+User-facing failures raise Cooper-Beta exceptions such as
+`InputValidationError`, `DsspNotFoundError`, `DsspError`, `StructureParseError`,
+and `ChainNotFoundError`.
 
 ## Output
 
-The result CSV includes one row per chain with:
+The result CSV includes one row per chain. Core columns include:
 
+- `filename` and `chain`
 - `result`: `BARREL`, `NON_BARREL`, `FILTERED_OUT`, or `ERROR`
+- `result_stage` and `reason`
 - `decision_score`, `decision_basis`, and `decision_threshold`
-- raw and adjusted scores
-- valid, scored, junk, invalid, and total layer counts
-- chain, sheet, and informative-slice counts
-- a short reason for the final decision
+- `score_raw` and `score_adjust`
+- `valid_layers`, `scored_layers`, `total_layers`, `junk_layers`, and
+  `invalid_layers`
+- `chain_residues`, `sheet_residues`, and `informative_slices`
+
+Large directory runs use bounded prepare and analysis batches, and the CLI writes
+the CSV incrementally. The console summary is capped by default; set
+`output.summary_limit=-1` to print every row.
+
+## Evaluation Helpers
+
+Evaluation utilities are available after installing `cooper-beta[eval]`:
+
+```bash
+cooper-beta-eval \
+  --positives path/to/positive-structures \
+  --negatives path/to/negative-structures \
+  --save-dir evaluation-results
+python -m cooper_beta.evaluation \
+  --positives path/to/positive-structures \
+  --negatives path/to/negative-structures \
+  --ablation
+```
+
+The GitHub repository also contains helper scripts for local datasets and
+Cooper-Beta CSV outputs. Local structure datasets, manual review notes, and
+research-only helper scripts are intentionally excluded from the package
+artifacts.
 
 ## Changelog
 

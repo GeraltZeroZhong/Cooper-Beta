@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -64,7 +65,7 @@ def ablation_suite() -> list[tuple[str, dict[str, object]]]:
     ]
 
 
-def main(argv: list[str] | None = None) -> None:
+def _run(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate Cooper-Beta on positive and negative folders and save CSV outputs "
@@ -72,13 +73,17 @@ def main(argv: list[str] | None = None) -> None:
         )
     )
     parser.add_argument(
+        "--positives",
         "--true",
-        default="data-true",
+        dest="true",
+        required=True,
         help="Directory containing positive examples (beta-barrel-like structures).",
     )
     parser.add_argument(
+        "--negatives",
         "--false",
-        default="data-false",
+        dest="false",
+        required=True,
         help="Directory containing negative examples (non-barrel structures).",
     )
     parser.add_argument(
@@ -95,7 +100,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--save-dir",
-        default="eval_outputs",
+        default="evaluation-results",
         help="Directory where evaluation CSV files are written.",
     )
     parser.add_argument(
@@ -135,7 +140,7 @@ def main(argv: list[str] | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows: list[dict[str, object]] = []
-    print("\n=== Ablation study (12 exps: core components + exception layer) ===")
+    print("\n=== Ablation study (12-experiment suite: core components + exception layer) ===")
     print(f"Output dir: {output_dir}\n")
 
     for experiment_name, overrides in ablation_suite():
@@ -252,6 +257,14 @@ def main(argv: list[str] | None = None) -> None:
     if display_columns:
         print(dataframe[display_columns].to_string(index=False))
     print(f"\nSaved: {output_path}\n")
+
+
+def main(argv: list[str] | None = None) -> None:
+    try:
+        _run(argv)
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -29,6 +29,9 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Check source distribution manifest
+        run: python -m check_manifest -v
+
       - name: Build distributions
         run: |
           python -m pip install --upgrade build twine

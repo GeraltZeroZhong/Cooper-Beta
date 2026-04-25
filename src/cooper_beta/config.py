@@ -18,6 +18,7 @@ from .constants import (
     DEFAULT_OUTPUT_CSV,
     DEFAULT_SLICE_STEP_SIZE,
 )
+from .exceptions import ConfigValidationError
 
 
 @dataclass
@@ -330,8 +331,289 @@ def build_config(
     app_cfg = OmegaConf.to_object(cfg)
     if not isinstance(app_cfg, AppConfig):
         raise TypeError("Hydra returned an unexpected configuration object.")
+    validate_config(app_cfg)
     sync_legacy_config(app_cfg)
     return app_cfg
+
+
+def _require_positive(name: str, value: int | float) -> None:
+    if value <= 0:
+        raise ConfigValidationError(f"`{name}` must be greater than 0.")
+
+
+def _require_non_negative(name: str, value: int | float) -> None:
+    if value < 0:
+        raise ConfigValidationError(f"`{name}` must be greater than or equal to 0.")
+
+
+def _require_ratio(name: str, value: float) -> None:
+    if not 0.0 <= value <= 1.0:
+        raise ConfigValidationError(f"`{name}` must be between 0 and 1.")
+
+
+def _require_ordered_range(name_min: str, min_value: int | float, name_max: str, max_value: int | float) -> None:
+    if max_value < min_value:
+        raise ConfigValidationError(f"`{name_max}` must be >= `{name_min}`.")
+
+
+def validate_config(cfg: AppConfig) -> None:
+    """Validate user-editable configuration values before running analysis."""
+    if cfg.runtime.workers is not None:
+        _require_positive("runtime.workers", int(cfg.runtime.workers))
+    if cfg.runtime.prepare_workers is not None:
+        _require_positive("runtime.prepare_workers", int(cfg.runtime.prepare_workers))
+    _require_positive("runtime.prepare_batch_size", int(cfg.runtime.prepare_batch_size))
+    _require_positive("runtime.analysis_batch_size", int(cfg.runtime.analysis_batch_size))
+    _require_non_negative("runtime.cpu_reserve", int(cfg.runtime.cpu_reserve))
+
+    if not cfg.input.allowed_suffixes:
+        raise ConfigValidationError("`input.allowed_suffixes` must contain at least one suffix.")
+    for suffix in cfg.input.allowed_suffixes:
+        if not str(suffix).startswith("."):
+            raise ConfigValidationError("Each `input.allowed_suffixes` value must start with '.'.")
+    _require_non_negative("input.min_chain_residues", int(cfg.input.min_chain_residues))
+    _require_non_negative("input.min_sheet_residues", int(cfg.input.min_sheet_residues))
+    _require_non_negative("input.min_informative_slices", int(cfg.input.min_informative_slices))
+
+    _require_positive("slicer.step_size", float(cfg.slicer.step_size))
+    _require_non_negative("slicer.fill_sheet_hole_length", int(cfg.slicer.fill_sheet_hole_length))
+
+    fit = cfg.analyzer.fit
+    _require_positive("analyzer.fit.min_points_per_slice", int(fit.min_points_per_slice))
+    _require_positive("analyzer.fit.max_rmse", float(fit.max_rmse))
+    _require_positive("analyzer.fit.min_axis", float(fit.min_axis))
+    _require_positive("analyzer.fit.max_axis", float(fit.max_axis))
+    if float(fit.max_axis) < float(fit.min_axis):
+        raise ConfigValidationError("`analyzer.fit.max_axis` must be >= `analyzer.fit.min_axis`.")
+    if float(fit.max_flattening) < 1.0:
+        raise ConfigValidationError("`analyzer.fit.max_flattening` must be >= 1.")
+    _require_positive("analyzer.fit.least_squares.f_scale", float(fit.least_squares.f_scale))
+
+    decision = cfg.analyzer.decision
+    _require_ratio("analyzer.decision.barrel_valid_ratio", float(decision.barrel_valid_ratio))
+    _require_positive(
+        "analyzer.decision.min_intersections_for_scoring",
+        int(decision.min_intersections_for_scoring),
+    )
+    _require_ratio("analyzer.decision.min_scored_layer_frac", float(decision.min_scored_layer_frac))
+    _require_non_negative("analyzer.decision.min_scored_layers", int(decision.min_scored_layers))
+
+    small = decision.small_barrel_rescue
+    _require_ratio("analyzer.decision.small_barrel_rescue.min_score", float(small.min_score))
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.min_scored_layers",
+        int(small.min_scored_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.min_total_layers",
+        int(small.min_total_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.max_avg_radius",
+        float(small.max_avg_radius),
+    )
+    _require_ratio(
+        "analyzer.decision.small_barrel_rescue.compact_min_score",
+        float(small.compact_min_score),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.compact_min_scored_layers",
+        int(small.compact_min_scored_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.compact_min_total_layers",
+        int(small.compact_min_total_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.compact_max_total_layers",
+        int(small.compact_max_total_layers),
+    )
+    _require_ordered_range(
+        "analyzer.decision.small_barrel_rescue.compact_min_total_layers",
+        int(small.compact_min_total_layers),
+        "analyzer.decision.small_barrel_rescue.compact_max_total_layers",
+        int(small.compact_max_total_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.compact_min_chain_residues",
+        int(small.compact_min_chain_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.compact_min_sheet_residues",
+        int(small.compact_min_sheet_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.compact_max_avg_radius",
+        float(small.compact_max_avg_radius),
+    )
+    _require_ratio(
+        "analyzer.decision.small_barrel_rescue.sparse_min_score",
+        float(small.sparse_min_score),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.sparse_min_scored_layers",
+        int(small.sparse_min_scored_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.sparse_min_total_layers",
+        int(small.sparse_min_total_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.sparse_min_chain_residues",
+        int(small.sparse_min_chain_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.sparse_max_chain_residues",
+        int(small.sparse_max_chain_residues),
+    )
+    _require_ordered_range(
+        "analyzer.decision.small_barrel_rescue.sparse_min_chain_residues",
+        int(small.sparse_min_chain_residues),
+        "analyzer.decision.small_barrel_rescue.sparse_max_chain_residues",
+        int(small.sparse_max_chain_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.sparse_min_sheet_residues",
+        int(small.sparse_min_sheet_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.small_barrel_rescue.sparse_max_avg_radius",
+        float(small.sparse_max_avg_radius),
+    )
+
+    near = decision.near_miss_rescue
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.soft_nn_min_layers",
+        int(near.soft_nn_min_layers),
+    )
+    _require_ratio(
+        "analyzer.decision.near_miss_rescue.soft_nn_min_inlier_frac",
+        float(near.soft_nn_min_inlier_frac),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.soft_nn_max_robust_cv",
+        float(near.soft_nn_max_robust_cv),
+    )
+    for prefix in ("soft_nn", "compact_partner"):
+        min_total = getattr(near, f"{prefix}_min_total_layers")
+        max_total = getattr(near, f"{prefix}_max_total_layers")
+        min_chain = getattr(near, f"{prefix}_min_chain_residues")
+        max_chain = getattr(near, f"{prefix}_max_chain_residues")
+        min_sheet = getattr(near, f"{prefix}_min_sheet_residues")
+        max_sheet = getattr(near, f"{prefix}_max_sheet_residues")
+        _require_non_negative(f"analyzer.decision.near_miss_rescue.{prefix}_min_total_layers", int(min_total))
+        _require_non_negative(f"analyzer.decision.near_miss_rescue.{prefix}_max_total_layers", int(max_total))
+        _require_ordered_range(
+            f"analyzer.decision.near_miss_rescue.{prefix}_min_total_layers",
+            int(min_total),
+            f"analyzer.decision.near_miss_rescue.{prefix}_max_total_layers",
+            int(max_total),
+        )
+        _require_non_negative(f"analyzer.decision.near_miss_rescue.{prefix}_min_chain_residues", int(min_chain))
+        _require_non_negative(f"analyzer.decision.near_miss_rescue.{prefix}_max_chain_residues", int(max_chain))
+        _require_ordered_range(
+            f"analyzer.decision.near_miss_rescue.{prefix}_min_chain_residues",
+            int(min_chain),
+            f"analyzer.decision.near_miss_rescue.{prefix}_max_chain_residues",
+            int(max_chain),
+        )
+        _require_non_negative(f"analyzer.decision.near_miss_rescue.{prefix}_min_sheet_residues", int(min_sheet))
+        _require_non_negative(f"analyzer.decision.near_miss_rescue.{prefix}_max_sheet_residues", int(max_sheet))
+        _require_ordered_range(
+            f"analyzer.decision.near_miss_rescue.{prefix}_min_sheet_residues",
+            int(min_sheet),
+            f"analyzer.decision.near_miss_rescue.{prefix}_max_sheet_residues",
+            int(max_sheet),
+        )
+    _require_ratio(
+        "analyzer.decision.near_miss_rescue.compact_partner_min_score",
+        float(near.compact_partner_min_score),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.compact_partner_min_valid_layers",
+        int(near.compact_partner_min_valid_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.compact_partner_min_scored_layers",
+        int(near.compact_partner_min_scored_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.compact_partner_min_avg_radius",
+        float(near.compact_partner_min_avg_radius),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.compact_partner_max_avg_radius",
+        float(near.compact_partner_max_avg_radius),
+    )
+    _require_ordered_range(
+        "analyzer.decision.near_miss_rescue.compact_partner_min_avg_radius",
+        float(near.compact_partner_min_avg_radius),
+        "analyzer.decision.near_miss_rescue.compact_partner_max_avg_radius",
+        float(near.compact_partner_max_avg_radius),
+    )
+    _require_ratio(
+        "analyzer.decision.near_miss_rescue.large_partner_min_score",
+        float(near.large_partner_min_score),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_min_valid_layers",
+        int(near.large_partner_min_valid_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_min_scored_layers",
+        int(near.large_partner_min_scored_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_min_total_layers",
+        int(near.large_partner_min_total_layers),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_min_chain_residues",
+        int(near.large_partner_min_chain_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_min_sheet_residues",
+        int(near.large_partner_min_sheet_residues),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_min_avg_radius",
+        float(near.large_partner_min_avg_radius),
+    )
+    _require_non_negative(
+        "analyzer.decision.near_miss_rescue.large_partner_max_avg_radius",
+        float(near.large_partner_max_avg_radius),
+    )
+    _require_ordered_range(
+        "analyzer.decision.near_miss_rescue.large_partner_min_avg_radius",
+        float(near.large_partner_min_avg_radius),
+        "analyzer.decision.near_miss_rescue.large_partner_max_avg_radius",
+        float(near.large_partner_max_avg_radius),
+    )
+
+    guard = decision.low_sheet_wide_guard
+    _require_non_negative("analyzer.decision.low_sheet_wide_guard.max_chain_residues", int(guard.max_chain_residues))
+    _require_non_negative("analyzer.decision.low_sheet_wide_guard.max_sheet_residues", int(guard.max_sheet_residues))
+    _require_non_negative("analyzer.decision.low_sheet_wide_guard.min_avg_radius", float(guard.min_avg_radius))
+    _require_non_negative("analyzer.decision.low_sheet_wide_guard.min_total_layers", int(guard.min_total_layers))
+    _require_non_negative("analyzer.decision.low_sheet_wide_guard.min_scored_layers", int(guard.min_scored_layers))
+
+    refine_angle = float(cfg.analyzer.axis_search.refine.angle_deg)
+    if not 0.0 <= refine_angle <= 180.0:
+        raise ConfigValidationError("`analyzer.axis_search.refine.angle_deg` must be between 0 and 180.")
+
+    nn = cfg.analyzer.rules.nearest_neighbor
+    _require_non_negative("analyzer.rules.nearest_neighbor.max_robust_cv", float(nn.max_robust_cv))
+    _require_ratio("analyzer.rules.nearest_neighbor.min_inlier_frac", float(nn.min_inlier_frac))
+
+    angle = cfg.analyzer.rules.angle
+    if not 0.0 <= float(angle.max_gap_deg) <= 360.0:
+        raise ConfigValidationError("`analyzer.rules.angle.max_gap_deg` must be between 0 and 360.")
+    _require_non_negative("analyzer.rules.angle.order.local_step_max", int(angle.order.local_step_max))
+    _require_ratio("analyzer.rules.angle.order.min_local_frac", float(angle.order.min_local_frac))
+    _require_ratio(
+        "analyzer.rules.angle.order.max_mean_circ_dist_norm",
+        float(angle.order.max_mean_circ_dist_norm),
+    )
 
 
 def sync_legacy_config(cfg: AppConfig) -> None:

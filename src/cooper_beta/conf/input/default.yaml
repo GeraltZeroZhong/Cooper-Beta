@@ -1,4 +1,4 @@
-path: data/
+path: ""
 allowed_suffixes:
   - .pdb
   - .cif

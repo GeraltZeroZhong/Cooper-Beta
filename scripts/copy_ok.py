@@ -27,7 +27,10 @@ def find_in_source(source_dir: Path, relative_or_name: str, recursive: bool) -> 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Copy or move files listed in a Cooper-Beta results CSV into a target folder."
+        description=(
+            "Copy or move structure files for OK Cooper-Beta detections into a target folder. "
+            "By default this keeps rows where result == BARREL and reason == OK."
+        )
     )
     parser.add_argument(
         "--csv",
@@ -36,12 +39,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--src",
-        default="data",
+        required=True,
         help="Source directory containing structure files.",
     )
     parser.add_argument(
         "--dst",
-        default="data-ok",
+        default="selected-structures",
         help="Destination directory.",
     )
     parser.add_argument(
@@ -59,6 +62,21 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Keep existing destination files instead of overwriting them.",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Copy every unique filename in the CSV instead of filtering to OK detections.",
+    )
+    parser.add_argument(
+        "--result",
+        default="BARREL",
+        help='Result value to keep when filtering (default: "BARREL").',
+    )
+    parser.add_argument(
+        "--reason",
+        default="OK",
+        help='Reason value to keep when filtering (default: "OK").',
+    )
     args = parser.parse_args(argv)
 
     csv_path = Path(args.csv)
@@ -70,6 +88,15 @@ def main(argv: list[str] | None = None) -> None:
     dataframe = pd.read_csv(csv_path)
     if "filename" not in dataframe.columns:
         raise ValueError('CSV is missing the required column: "filename"')
+    if not args.all:
+        required_columns = {"result", "reason"}
+        missing_columns = sorted(required_columns - set(dataframe.columns))
+        if missing_columns:
+            joined = ", ".join(missing_columns)
+            raise ValueError(f"CSV is missing required column(s) for OK filtering: {joined}")
+        result_matches = dataframe["result"].astype(str).str.upper() == str(args.result).upper()
+        reason_matches = dataframe["reason"].astype(str) == str(args.reason)
+        dataframe = dataframe[result_matches & reason_matches].copy()
 
     destination_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
             shutil.copy2(str(source_path), str(destination_path))
         copied += 1
 
+    print(f"Rows selected          : {len(dataframe)}")
     print(f"Total unique filenames : {len(filenames)}")
     print(f"Copied or moved        : {copied}")
     print(f"Skipped (kept existing): {skipped}")

@@ -1,3 +1,4 @@
+import gzip
 import os
 import re
 import string
@@ -9,11 +10,13 @@ from Bio.PDB import PDBIO, MMCIFParser, PDBParser, Select
 from Bio.PDB.DSSP import DSSP
 from Bio.PDB.Polypeptide import is_aa
 
+from .exceptions import ChainNotFoundError, DsspError, InputValidationError, StructureParseError
 from .runtime import require_dssp_binary
 
-warnings.simplefilter("ignore", BiopythonWarning)
-
 _DSSP_PDB_MMCIF_WARNING_PATTERN = r".*not seem to be an mmCIF file.*"
+_DEFAULT_CRYST1 = (
+    "CRYST1 1000.000 1000.000 1000.000  90.00  90.00  90.00 P 1           1          \n"
+)
 
 
 # -------------------------
@@ -117,6 +120,22 @@ def _strip_remark_350_to_temp_pdb(in_path: str) -> str:
     return out_path
 
 
+def _decompress_gzip_to_temp_if_needed(in_path: str) -> str | None:
+    with open(in_path, "rb") as handle:
+        if handle.read(2) != b"\x1f\x8b":
+            return None
+
+    suffix = os.path.splitext(in_path)[1] or ".pdb"
+    fd, out_path = tempfile.mkstemp(suffix=suffix)
+    with gzip.open(in_path, "rb") as source, os.fdopen(fd, "wb") as target:
+        while True:
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
+            target.write(chunk)
+    return out_path
+
+
 # -------------------------
 # DSSP: export protein only
 # -------------------------
@@ -134,11 +153,19 @@ class ProteinLoader:
     Load PDB/mmCIF structures, run DSSP, and extract per-chain CA data.
     """
 
-    def __init__(self, file_path, model_id=0, dssp_bin=None, fail_on_dssp_error=True):
+    def __init__(
+        self,
+        file_path,
+        model_id=0,
+        dssp_bin=None,
+        fail_on_dssp_error=True,
+        strict_chain: bool = True,
+    ):
         self.file_path = file_path
         self.model_id = model_id
         self.dssp_bin = dssp_bin
         self.fail_on_dssp_error = bool(fail_on_dssp_error)
+        self.strict_chain = bool(strict_chain)
 
         self.structure = None
         self.model = None
@@ -149,18 +176,22 @@ class ProteinLoader:
 
     def _load_structure(self):
         if not os.path.exists(self.file_path):
-            raise FileNotFoundError(f"Structure file not found: {self.file_path}")
+            raise InputValidationError(f"Structure file not found: {self.file_path}")
 
-        ext = os.path.splitext(self.file_path)[1].lower()
+        input_tmp = _decompress_gzip_to_temp_if_needed(self.file_path)
+        parse_path = input_tmp or self.file_path
+        ext = os.path.splitext(parse_path)[1].lower()
 
         try:
-            if ext in [".cif", ".mmcif"]:
-                parser = MMCIFParser(QUIET=True)
-                self.structure = parser.get_structure("struct", self.file_path)
-            else:
-                # Important: disable header parsing.
-                parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
-                self.structure = parser.get_structure("struct", self.file_path)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", BiopythonWarning)
+                if ext in [".cif", ".mmcif"]:
+                    parser = MMCIFParser(QUIET=True)
+                    self.structure = parser.get_structure("struct", parse_path)
+                else:
+                    # Important: disable header parsing.
+                    parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
+                    self.structure = parser.get_structure("struct", parse_path)
 
             self.model = self.structure[self.model_id]
             return
@@ -170,13 +201,17 @@ class ProteinLoader:
             if ext not in [".cif", ".mmcif"]:
                 tmp = None
                 try:
-                    tmp = _strip_remark_350_to_temp_pdb(self.file_path)
-                    parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
-                    self.structure = parser.get_structure("struct", tmp)
+                    tmp = _strip_remark_350_to_temp_pdb(parse_path)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", BiopythonWarning)
+                        parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
+                        self.structure = parser.get_structure("struct", tmp)
                     self.model = self.structure[self.model_id]
                     return
                 except Exception as e2:
-                    raise ValueError(f"Failed to parse structure {self.file_path}: {e2}") from None
+                    raise StructureParseError(
+                        f"Failed to parse structure {self.file_path}: {e2}"
+                    ) from None
                 finally:
                     if tmp and os.path.exists(tmp):
                         try:
@@ -184,7 +219,13 @@ class ProteinLoader:
                         except OSError:
                             pass
 
-            raise ValueError(f"Failed to parse structure {self.file_path}: {e}") from None
+            raise StructureParseError(f"Failed to parse structure {self.file_path}: {e}") from None
+        finally:
+            if input_tmp and os.path.exists(input_tmp):
+                try:
+                    os.remove(input_tmp)
+                except OSError:
+                    pass
 
     def _export_protein_only_pdb(self) -> str:
         _sanitize_blank_chain_ids(self.model)
@@ -193,6 +234,7 @@ class ProteinLoader:
         fd, tmp_path = tempfile.mkstemp(suffix=".pdb")
         with os.fdopen(fd, "w") as handle:
             handle.write("HEADER    GENERATED BY LOADER                         \n")
+            handle.write(_DEFAULT_CRYST1)
             io = PDBIO()
             io.set_structure(self.model)
             io.save(handle, select=_ProteinOnlySelect())
@@ -223,7 +265,7 @@ class ProteinLoader:
         except Exception as e:
             self.secondary_structure_error = f"DSSP failed for {os.path.basename(self.file_path)}: {e}"
             if self.fail_on_dssp_error:
-                raise RuntimeError(self.secondary_structure_error) from e
+                raise DsspError(self.secondary_structure_error) from e
             print(f"  [Warning] {self.secondary_structure_error}")
             self.secondary_structure = {}
 
@@ -234,17 +276,26 @@ class ProteinLoader:
                 except OSError:
                     pass
 
-    def get_ca_data(self, chain_id):
-        if self.secondary_structure is None:
-            self._run_secondary_structure()
+    def available_chains(self) -> list[str]:
+        """Return chain IDs available in the selected model."""
+        return [str(chain.id) for chain in self.model.get_chains()]
 
+    def get_ca_data(self, chain_id, *, strict_chain: bool | None = None):
         chain = self.model[chain_id] if chain_id in self.model else None
-        if not chain:
+        if chain is None:
             chains = list(self.model.get_chains())
-            if len(chains) == 1:
+            strict = self.strict_chain if strict_chain is None else bool(strict_chain)
+            if not strict and len(chains) == 1:
                 chain = chains[0]
             else:
-                return []
+                available = ", ".join(self.available_chains()) or "none"
+                raise ChainNotFoundError(
+                    f"Chain {chain_id!r} not found in {os.path.basename(self.file_path)}. "
+                    f"Available chains: {available}."
+                )
+
+        if self.secondary_structure is None:
+            self._run_secondary_structure()
 
         data = []
         for res in chain:
@@ -261,11 +312,12 @@ class ProteinLoader:
             data.append(
                 {
                     "res_id": res.id[1],
+                    "chain": chain.id,
                     "coord": res["CA"].get_coord(),
                     "is_sheet": ss_code in ("E", "B"),
                 }
             )
         return data
 
-    def get_chain_data(self, chain_id):
-        return self.get_ca_data(chain_id)
+    def get_chain_data(self, chain_id, *, strict_chain: bool | None = None):
+        return self.get_ca_data(chain_id, strict_chain=strict_chain)
