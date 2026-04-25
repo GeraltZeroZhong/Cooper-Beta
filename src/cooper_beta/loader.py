@@ -13,6 +13,8 @@ from .runtime import require_dssp_binary
 
 warnings.simplefilter("ignore", BiopythonWarning)
 
+_DSSP_PDB_MMCIF_WARNING_PATTERN = r".*not seem to be an mmCIF file.*"
+
 
 # -------------------------
 # Utilities: element / chain
@@ -198,7 +200,13 @@ class ProteinLoader:
 
     def _run_dssp(self, tmp_path: str) -> dict[tuple[str, tuple[str, int, str]], str]:
         dssp_bin = require_dssp_binary(self.dssp_bin)
-        dssp_result = DSSP(self.model, tmp_path, dssp=dssp_bin)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=_DSSP_PDB_MMCIF_WARNING_PATTERN,
+                category=UserWarning,
+            )
+            dssp_result = DSSP(self.model, tmp_path, dssp=dssp_bin)
         return {dssp_key: str(dssp_result[dssp_key][2]) for dssp_key in dssp_result.keys()}
 
     def _run_secondary_structure(self):

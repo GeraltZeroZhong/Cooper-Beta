@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cooper_beta.config import build_config
-from cooper_beta.pipeline_workers import prepare_one_file
+from cooper_beta.pipeline_workers import prepare_file_batch, prepare_one_file
 
 
 class FakeChain:
@@ -73,3 +73,24 @@ def test_prepare_cache_invalidates_when_file_changes(tmp_path: Path, monkeypatch
     assert isinstance(first, list)
     assert isinstance(second, list)
     assert FakeLoader.calls == 2
+
+
+def test_prepare_file_batch_aggregates_payloads_and_errors(monkeypatch):
+    cfg = build_config({"input.min_chain_residues": 1})
+
+    def fake_prepare_one_file(file_path: str, cfg):
+        del cfg
+        if file_path == "bad.pdb":
+            return {"_error": "bad.pdb: parse failed"}
+        return [{"filename": file_path, "chain": "A", "residues_data": []}]
+
+    monkeypatch.setattr("cooper_beta.pipeline_workers.prepare_one_file", fake_prepare_one_file)
+
+    result = prepare_file_batch(["good-1.pdb", "bad.pdb", "good-2.pdb"], cfg)
+
+    assert result["processed"] == 3
+    assert result["errors"] == ["bad.pdb: parse failed"]
+    assert result["payloads"] == [
+        {"filename": "good-1.pdb", "chain": "A", "residues_data": []},
+        {"filename": "good-2.pdb", "chain": "A", "residues_data": []},
+    ]

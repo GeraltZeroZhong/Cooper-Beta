@@ -24,6 +24,8 @@ from .constants import (
 class RuntimeConfig:
     workers: int | None = None
     prepare_workers: int | None = None
+    prepare_batch_size: int = 16
+    analysis_batch_size: int = 64
     cpu_reserve: int = 1
     dssp_bin_path: str | None = None
     fail_on_dssp_error: bool = True
@@ -44,6 +46,7 @@ class InputConfig:
 @dataclass
 class OutputConfig:
     csv_path: str = DEFAULT_OUTPUT_CSV
+    summary_limit: int = 50
 
 
 @dataclass
@@ -224,6 +227,8 @@ class AppConfig:
 
 LEGACY_OVERRIDE_PATHS = {
     "DSSP_BIN_PATH": "runtime.dssp_bin_path",
+    "PREPARE_BATCH_SIZE": "runtime.prepare_batch_size",
+    "ANALYSIS_BATCH_SIZE": "runtime.analysis_batch_size",
     "PREPARE_CACHE_ENABLED": "runtime.prepare_cache_enabled",
     "PREPARE_CACHE_DIR": "runtime.prepare_cache_dir",
     "SLICE_STEP_SIZE": "slicer.step_size",
@@ -262,6 +267,7 @@ LEGACY_OVERRIDE_PATHS = {
     "MIN_CHAIN_RESIDUES": "input.min_chain_residues",
     "MIN_SHEET_RESIDUES": "input.min_sheet_residues",
     "MIN_INFORMATIVE_SLICES": "input.min_informative_slices",
+    "SUMMARY_LIMIT": "output.summary_limit",
 }
 
 
