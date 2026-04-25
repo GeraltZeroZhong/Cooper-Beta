@@ -12,6 +12,7 @@ data/*
 !data/scripts/
 !data/scripts/*.py
 data-test/
+BFVD/
 eval_outputs/
 real-data/
 old-data/
