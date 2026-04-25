@@ -1,0 +1,21 @@
+JUCHMME :: Java Utility for Class Hidden Markov Models and Extensions
+--------------------------------------------------------------------------
+ID: >toy_barrel
+SQ: ATSTVTGGYAQSDAQGQMNK
+CC:	len = 20.0	logodds = 4.5	maxProb = 0.99	(-logprob/lng) = 1.8
+VS: 10.0
+VR: 0.91
+VP: MMMMOOOOMMMMIIIIMMMM
+LS: 12.0
+LR: 0.93
+LP: MMMMOOOOMMMMIIIIMMMM
+ID: >toy_nonbarrel
+SQ: AAAAAAAAAAAAAAAAAAAA
+CC:	len = 20.0	logodds = -5.0	maxProb = 0.75	(-logprob/lng) = 3.2
+VS: -3.0
+VR: 0.80
+VP: IIIIIIIIIIIIIIIIIIII
+LS: -2.0
+LR: 0.82
+LP: IIIIIIIIIIIIIIIIIIII
+Execution time = 10 miliseconds
