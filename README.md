@@ -20,7 +20,7 @@ For a source checkout:
 
 ```bash
 pip install -e ".[full]"
-cooper-beta path/to/structures --workers 8 --prepare-workers 4
+cooper-beta path/to/structures --workers 8 --prepare-workers 8
 ```
 
 If DSSP is not on `PATH`, pass its location with Hydra-style overrides:
@@ -90,6 +90,9 @@ print(rows[0])
 
 The CLI accepts both legacy shortcuts (`--workers`, `--prepare-workers`, `--out`)
 and Hydra-style overrides such as `analyzer.rules.angle.max_gap_deg=160`.
+Large directory runs use bounded prepare/analysis batches and write the output
+CSV incrementally. The console summary is capped by default; set
+`output.summary_limit=-1` to print every row.
 
 ## Output
 

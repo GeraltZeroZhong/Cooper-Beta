@@ -4,8 +4,8 @@ from copy import deepcopy
 from pathlib import Path
 
 from .config import AppConfig, build_config, sync_legacy_config
-from .pipeline_workers import collect_payloads, run_analysis
-from .results import print_results_summary
+from .pipeline_workers import iter_prepared_payload_batches, run_analysis_stream
+from .results import ResultCsvWriter, print_results_summary
 from .runtime import require_dssp_binary
 
 
@@ -73,19 +73,36 @@ def run_pipeline(cfg: AppConfig) -> list[dict[str, object]]:
         print(f"No {allowed} files found in: {cfg.input.path}")
         return []
 
-    require_dssp_binary(cfg.runtime.dssp_bin_path)
+    cfg.runtime.dssp_bin_path = require_dssp_binary(cfg.runtime.dssp_bin_path)
+    sync_legacy_config(cfg)
 
     analysis_workers = resolve_analysis_worker_count(cfg.runtime.workers, cfg.runtime.cpu_reserve)
     prepare_workers = resolve_prepare_worker_count(cfg.runtime.prepare_workers, analysis_workers)
 
-    payloads = collect_payloads(files, cfg, prepare_workers)
-    if not payloads:
+    print(
+        f"\nRunning streaming pipeline with {prepare_workers} prepare worker(s) "
+        f"and {analysis_workers} analysis worker(s)..."
+    )
+    payload_batches = iter_prepared_payload_batches(files, cfg, prepare_workers)
+    with ResultCsvWriter(cfg.output.csv_path) as writer:
+        results = run_analysis_stream(
+            payload_batches,
+            cfg,
+            analysis_workers,
+            on_results=writer.write_rows,
+        )
+
+    if not results:
         print("No analyzable chain payloads were produced.")
+        print(f"\nResults written to: {cfg.output.csv_path}")
         return []
 
-    print(f"\nRunning analysis with {analysis_workers} worker(s)...")
-    results = run_analysis(payloads, cfg, analysis_workers)
-    print_results_summary(results, cfg.output.csv_path)
+    print_results_summary(
+        results,
+        cfg.output.csv_path,
+        summary_limit=cfg.output.summary_limit,
+        write_csv=False,
+    )
     return results
 
 
