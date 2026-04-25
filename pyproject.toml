@@ -80,7 +80,10 @@ testpaths = ["tests"]
 ignore = [
   ".github/**",
   ".gitignore",
+  "data/external_methods/**",
   "data/scripts/**",
+  "external_methods/**",
   "main.py",
   "scripts/*.py",
+  "tests/test_external_isitabarrel.py",
 ]

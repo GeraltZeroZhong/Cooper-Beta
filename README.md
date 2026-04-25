@@ -152,6 +152,16 @@ Cooper-Beta CSV outputs. Local structure datasets, manual review notes, and
 research-only helper scripts are intentionally excluded from the package
 artifacts.
 
+## External Baselines
+
+Evaluation-only adapters for external methods live in `external_methods/`.
+The first adapter supports `isitabarrel_structure_map`, which generates
+structure-derived contact-map pickles from PDB/CIF/mmCIF inputs, invokes an
+external `isitabarrel.py` checkout, and normalizes its `results.tsv` output.
+The upstream AGPL-3.0 code is not vendored into Cooper-Beta. These external
+baseline adapters are kept for repository-level reproducibility and are
+intentionally excluded from PyPI package artifacts.
+
 ## Changelog
 
 ### 0.1.0
