@@ -1,0 +1,3 @@
+MAP_NAME	CC2	BSS	H4	CC2_TO_H4	CC2_TO_BSS	BSS_TO_CC2_TO_BSS
+toy_barrel	0.75	5	4	0.75	0.75	0.75
+toy_nonbarrel	0	1	0	0	0	0

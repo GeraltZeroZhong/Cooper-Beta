@@ -4,5 +4,8 @@ include pyproject.toml
 include environment.yml
 include scripts/setup_env.sh
 recursive-include tests *.py
+exclude tests/test_external_isitabarrel.py
 recursive-include src/cooper_beta/conf *.yaml
+recursive-exclude data/external_methods *
+recursive-exclude external_methods *
 global-exclude __pycache__ *.py[cod] .DS_Store

@@ -8,6 +8,8 @@ dist/
 data/*
 !data/scripts/
 !data/scripts/*.py
+!data/external_methods/
+!data/external_methods/**
 data-test/
 BFVD/
 eval_outputs/
