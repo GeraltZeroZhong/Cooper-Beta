@@ -158,9 +158,12 @@ Evaluation-only adapters for external methods live in `external_methods/`.
 The first adapter supports `isitabarrel_structure_map`, which generates
 structure-derived contact-map pickles from PDB/CIF/mmCIF inputs, invokes an
 external `isitabarrel.py` checkout, and normalizes its `results.tsv` output.
-The upstream AGPL-3.0 code is not vendored into Cooper-Beta. These external
-baseline adapters are kept for repository-level reproducibility and are
-intentionally excluded from PyPI package artifacts.
+The repository also includes `pred_tmbb2_single_juchmme`, a sequence-only
+baseline adapter that extracts chain FASTA records from structures, invokes an
+external JUCHMME/PRED-TMBB2 checkout, and normalizes topology-derived results.
+The upstream AGPL-3.0/GPL-3.0 code is not vendored into Cooper-Beta. These
+external baseline adapters are kept for repository-level reproducibility and
+are intentionally excluded from PyPI package artifacts.
 
 ## Changelog
 

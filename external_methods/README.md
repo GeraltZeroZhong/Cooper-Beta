@@ -12,3 +12,9 @@ Each method should provide:
 - a small runner that invokes the external method or parses its output;
 - smoke-test fixtures under `data/external_methods/` when the runner needs
   project-local test data.
+
+Current adapters:
+
+- `isitabarrel_structure_map`: structure-derived contact-map baseline.
+- `pred_tmbb2_single_juchmme`: sequence-only topology baseline using an
+  external JUCHMME/PRED-TMBB2 checkout.

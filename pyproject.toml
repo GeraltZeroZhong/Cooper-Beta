@@ -86,4 +86,5 @@ ignore = [
   "main.py",
   "scripts/*.py",
   "tests/test_external_isitabarrel.py",
+  "tests/test_external_pred_tmbb2.py",
 ]
