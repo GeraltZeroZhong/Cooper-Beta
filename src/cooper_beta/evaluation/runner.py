@@ -123,7 +123,7 @@ def evaluate(
     print_metric_tables: bool = True,
 ) -> dict[str, object]:
     if pd is None:
-        raise RuntimeError("pandas is required (pip install -e '.[full]').")
+        raise RuntimeError("pandas is required (pip install 'cooper-beta[eval]').")
 
     positive_dataframe = run_detector(true_dir, workers, prepare_workers, detector_overrides)
     negative_dataframe = run_detector(false_dir, workers, prepare_workers, detector_overrides)

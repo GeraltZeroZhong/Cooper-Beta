@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 
-def main():
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
         description='Filter a Cooper-Beta results CSV to rows where `result == "BARREL"` and `reason == "OK"`.'
     )
@@ -41,7 +41,7 @@ def main():
         action="store_true",
         help="Overwrite the input CSV in place and ignore --output.",
     )
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     in_path = Path(args.input).resolve()
     if not in_path.exists():

@@ -19,7 +19,7 @@ SUMMARY_DISPLAY_NAMES = {
     "result_stage": "Stage",
     "decision_score": "Score",
     "decision_basis": "Basis",
-    "layer_counts": "V/S/T",
+    "layer_counts": "Valid/Scored/Total",
     "reason": "Reason",
 }
 
@@ -85,9 +85,6 @@ class ResultCsvWriter:
 
 def write_results_csv(rows: list[dict[str, object]], output_path: str) -> None:
     """Write result rows without requiring pandas."""
-    if not rows:
-        return
-
     ordered_keys = _result_fieldnames(rows)
     _ensure_output_parent(output_path)
     with open(output_path, "w", newline="", encoding="utf-8") as handle:
@@ -177,8 +174,11 @@ def print_results_summary(
     *,
     summary_limit: int | None = 50,
     write_csv: bool = True,
+    output_written: bool | None = None,
 ) -> None:
     """Print a human-readable summary and persist the CSV."""
+    if output_written is None:
+        output_written = write_csv
     summary_rows, resolved_limit = _limited_summary_rows(results, summary_limit)
     result_counts = Counter(str(row.get("result", "") or "<blank>") for row in results)
     stage_counts = Counter(str(row.get("result_stage", "") or "<blank>") for row in results)
@@ -201,7 +201,8 @@ def print_results_summary(
             print(f"\n... omitted {omitted} row(s) from console summary.")
         if write_csv:
             write_results_csv(results, output_path)
-        print(f"\nResults written to: {output_path}")
+        if output_written or write_csv:
+            print(f"\nResults written to: {output_path}")
         return
 
     filename_width = SUMMARY_COLUMN_WIDTHS["filename"]
@@ -219,7 +220,7 @@ def print_results_summary(
         f"{'Stage':<{stage_width}} | "
         f"{'Score':<{score_width}} | "
         f"{'Basis':<{basis_width}} | "
-        f"{'V/S/T':<{layer_width}} | "
+        f"{'Valid/Scored/Total':<{layer_width}} | "
         f"{'Reason':<{reason_width}}"
     )
     if summary_rows:
@@ -243,4 +244,5 @@ def print_results_summary(
         print(f"\n... omitted {omitted} row(s) from console summary.")
     if write_csv:
         write_results_csv(results, output_path)
-    print(f"\nResults written to: {output_path}")
+    if output_written or write_csv:
+        print(f"\nResults written to: {output_path}")

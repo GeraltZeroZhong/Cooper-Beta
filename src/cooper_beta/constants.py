@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from math import pi
 
-DEFAULT_INPUT_PATH = "data/"
+DEFAULT_INPUT_PATH = ""
 DEFAULT_OUTPUT_CSV = "cooper_beta_results.csv"
 DEFAULT_ALLOWED_SUFFIXES = (".pdb", ".cif", ".mmcif")
 DEFAULT_SLICE_STEP_SIZE = 1.0
@@ -75,7 +75,7 @@ SUMMARY_COLUMN_WIDTHS = {
     "result_stage": 10,
     "decision_score": 8,
     "decision_basis": 8,
-    "layer_counts": 12,
+    "layer_counts": 18,
     "reason": 56,
 }
 
