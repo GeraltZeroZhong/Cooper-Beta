@@ -2,6 +2,8 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+build/
+dist/
 *.egg-info/
 data/*
 !data/manual_positive_label_notes.txt

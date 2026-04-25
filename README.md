@@ -1,160 +1,117 @@
 # Cooper-Beta
 
-## Overview
-Cooper-Beta is a Python pipeline that detects beta-barrel-like protein chains from PDB/mmCIF
-structures. It parses structures, runs DSSP to identify secondary structure, slices aligned
-coordinates, evaluates elliptical fits per slice, and produces a CSV summary indicating
-whether each chain is classified as a beta-barrel.
+Cooper-Beta detects beta-barrel-like protein chains in PDB, CIF, and mmCIF
+structures. It parses structures with Biopython, runs DSSP, slices beta-sheet
+C-alpha coordinates, fits ellipses to cross sections, applies geometric
+consistency rules, and writes a chain-level CSV.
 
-## Features
-- Supports PDB, CIF, and mmCIF inputs (single file or directory).
-- Parallel preparation (DSSP/structure parsing) and analysis phases.
-- Fast OpenCV-direct ellipse fitting plus adjustable geometric rules (nearest-neighbor spacing,
-  angular coverage, and sequence/angle order consistency).
-- CSV output with per-chain classification metrics, prefilter outcomes
-  (`FILTERED_OUT`), and failure reasons.
-- CLI and module entry points (`cooper-beta`, `python -m cooper_beta`).
+## Quick Start
 
-## Installation
-### Requirements
-- Python 3.10+
-- DSSP binary (`mkdssp` or `dssp`) available on your PATH
-- Core dependencies: NumPy, SciPy, Biopython, OpenCV (headless)
-- Optional: pandas and tqdm for richer summaries/progress output
-
-`pip` can install Python packages, but it cannot install system binaries such as
-DSSP for you. Cooper-Beta now checks for DSSP before analysis starts. If the
-binary is missing, the program fails fast with a clear message telling you to
-install DSSP first or set `runtime.dssp_bin_path=/absolute/path/to/mkdssp`.
-
-### Recommended: one-command setup
-This repository ships with `environment.yml` and `scripts/setup_env.sh`. This is
-the recommended setup path because it installs DSSP with `mamba` / `conda`
-alongside the Python environment and then installs this project:
+Cooper-Beta requires Python 3.10 or newer and a DSSP executable
+(`mkdssp` or `dssp`) on `PATH`.
 
 ```bash
-bash scripts/setup_env.sh
+pip install cooper-beta
+cooper-beta --check-env
+cooper-beta path/to/structures --out cooper_beta_results.csv
 ```
 
-If you also want the test and lint tooling, run:
+For a source checkout:
+
+```bash
+pip install -e ".[full]"
+cooper-beta path/to/structures --workers 8 --prepare-workers 4
+```
+
+If DSSP is not on `PATH`, pass its location with Hydra-style overrides:
+
+```bash
+cooper-beta path/to/structures runtime.dssp_bin_path=/absolute/path/to/mkdssp
+```
+
+## Installation
+
+Install from PyPI:
+
+```bash
+pip install cooper-beta
+```
+
+Install optional evaluation and progress-reporting dependencies:
+
+```bash
+pip install "cooper-beta[full]"
+```
+
+Install development tools from a source checkout:
+
+```bash
+pip install -e ".[full,dev]"
+```
+
+This repository also includes `environment.yml` and `scripts/setup_env.sh` for a
+Conda/Mamba environment that installs DSSP from `conda-forge`:
 
 ```bash
 bash scripts/setup_env.sh --dev
 ```
 
-What the setup script does:
-- Prefer `mamba`, `micromamba`, or `conda`, and install `dssp` from `conda-forge`
-- Fall back to `apt install dssp` plus a local `.venv` if no conda-style tool is available but `apt-get` exists
-- Print the exact activation command at the end
+## Minimal Examples
 
-### Install from source
-```bash
-pip install -e .
-```
-
-### Optional extras
-```bash
-pip install -e ".[full]"
-```
-
-### Validate the runtime environment
-```bash
-cooper-beta --check-env
-```
-
-If the output shows both the Python version and the DSSP path, the runtime
-environment is ready.
-
-## Usage
-### Command-line
-```bash
-# Analyze a directory with legacy shortcuts
-cooper-beta data/ --workers 8 --prepare-workers 4 --out cooper_beta_results.csv
-
-# Analyze a single file
-cooper-beta path/to/structure.pdb
-
-# Hydra-style overrides
-cooper-beta input.path=data runtime.workers=8 runtime.prepare_workers=4 output.csv_path=cooper_beta_results.csv
-
-# Module entry point
-python -m cooper_beta input.path=data runtime.workers=8 runtime.prepare_workers=4
-```
-
-### Legacy entry point
-```bash
-python main.py data/ 8 4
-```
-
-## Configuration
-Configuration is now managed by Hydra YAML files under `src/cooper_beta/conf/`.
-The default root config composes:
-- `runtime`: worker counts, DSSP path, strict DSSP behavior.
-  It also controls the on-disk prepare cache used to reuse structure parsing and
-  DSSP output across repeated runs.
-- `input`: input path, accepted suffixes, chain/sheet/slice prefilters.
-- `slicer`: slice thickness and short-hole filling.
-- `analyzer`: ellipse-fit thresholds, decision thresholds, nearest-neighbor rule,
-  angle-gap rule, and sequence-angle order rule.
-- `output`: result CSV path.
-
-Examples:
+Command line:
 
 ```bash
-# Point to a custom DSSP binary
-cooper-beta runtime.dssp_bin_path=/opt/dssp/bin/mkdssp
-
-# Disable the prepare cache for one run
-cooper-beta runtime.prepare_cache_enabled=false
-
-# Put the prepare cache in a custom directory
-cooper-beta runtime.prepare_cache_dir=/tmp/cooper-beta-cache
-
-# Tune geometric thresholds
-cooper-beta analyzer.fit.max_rmse=2.5 analyzer.rules.angle.max_gap_deg=70
-
-# Disable one rule for ablation
-cooper-beta analyzer.rules.nearest_neighbor.enabled=false
+cooper-beta data/ --out results.csv
+python -m cooper_beta data/ runtime.workers=4 output.csv_path=results.csv
 ```
 
-The legacy flat `Config` class still exists for backward compatibility in Python
-code, but the supported configuration surface is now Hydra.
+Python:
 
-The default result CSV reports both the raw and adjusted scores, the actual
-decision score/basis used for classification, layer coverage counts/fractions,
-and prefilter context such as chain residues, beta-sheet residues, and
-informative slices.
+```python
+from cooper_beta import build_config, main
 
-By default, Cooper-Beta derives both worker counts from the visible CPU set
-(`os.sched_getaffinity()` when available) and keeps one core in reserve via
-`runtime.cpu_reserve`. On this workstation, that resolves to `7` workers for
-both preparation and analysis. Prepare results are cached on disk by default
-under `~/.cache/cooper-beta/prepare` unless `XDG_CACHE_HOME` or
-`runtime.prepare_cache_dir` overrides that location.
-
-## Folder Structure
+cfg = build_config({"runtime.dssp_bin_path": "/usr/bin/mkdssp"})
+rows = main("path/to/structures", workers=4, out_csv="results.csv", cfg=cfg)
+print(rows[0])
 ```
-.
-├── main.py                  # Legacy entry point
-├── pyproject.toml           # Project metadata and dependencies
-├── src/
-│   └── cooper_beta/
-│       ├── __init__.py       # Package exports
-│       ├── __main__.py       # Module entry point
-│       ├── bootstrap.py      # Thread-environment bootstrap
-│       ├── cli.py            # CLI definition
-│       ├── config.py         # Hydra schema + legacy compatibility layer
-│       ├── conf/             # Hydra YAML configuration tree
-│       ├── loader.py         # Structure parsing + DSSP
-│       ├── alignment.py      # PCA-based alignment
-│       ├── slicer.py         # Coordinate slicing
-│       ├── ellipse.py        # Rotated ellipse fitting
-│       ├── analysis_utils.py # Geometric helper functions
-│       ├── analyzer.py       # Beta-barrel analysis orchestration
-│       ├── pipeline.py       # Pipeline orchestration
-│       ├── pipeline_workers.py # Preparation + analysis workers
-│       ├── results.py        # Summary/CSV output helpers
-│       └── evaluation/       # Evaluation and ablation utilities
-├── scripts/                  # Helper scripts
-└── tests/                    # Test suite
-```
+
+## Main API
+
+- `cooper_beta.main(...)`: run the full detection pipeline.
+- `cooper_beta.build_config(...)`: build an `AppConfig` from Hydra-style or
+  legacy overrides.
+- `cooper_beta.ProteinLoader`: parse structures and collect per-chain C-alpha
+  and DSSP annotations.
+- `cooper_beta.PCAAligner`: align chain coordinates with PCA.
+- `cooper_beta.ProteinSlicer`: convert aligned beta-sheet segments into slice
+  intersections.
+- `cooper_beta.BarrelAnalyzer`: score slice geometry and produce per-layer
+  diagnostics.
+
+The CLI accepts both legacy shortcuts (`--workers`, `--prepare-workers`, `--out`)
+and Hydra-style overrides such as `analyzer.rules.angle.max_gap_deg=160`.
+
+## Output
+
+The result CSV includes one row per chain with:
+
+- `result`: `BARREL`, `NON_BARREL`, `FILTERED_OUT`, or `ERROR`
+- `decision_score`, `decision_basis`, and `decision_threshold`
+- raw and adjusted scores
+- valid, scored, junk, invalid, and total layer counts
+- chain, sheet, and informative-slice counts
+- a short reason for the final decision
+
+## Changelog
+
+### 0.1.0
+
+- Initial public release.
+- CLI and Python API for PDB/CIF/mmCIF beta-barrel-like chain detection.
+- DSSP-backed secondary-structure parsing.
+- Ellipse fitting, PCA axis search, geometric rules, and CSV output.
+- Evaluation helpers and ablation utilities.
+
+## License
+
+Cooper-Beta is released under the MIT License. See `LICENSE`.

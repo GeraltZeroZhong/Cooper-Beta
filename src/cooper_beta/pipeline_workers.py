@@ -8,13 +8,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
+from .alignment import PCAAligner
 from .analysis_utils import (
     angular_gap_stats,
     collapse_points_by_strand,
     nearest_neighbor_spacing_stats,
     sequence_angle_order_stats,
 )
-from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
 from .config import AppConfig
 from .constants import (
