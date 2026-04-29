@@ -1,5 +1,6 @@
 # Cooper-Beta
 
+Cooper-Beta is named after a “cooper”, a traditional barrel maker, reflecting its focus on β-barrel fold detection.
 Cooper-Beta detects beta-barrel-like protein chains in PDB, CIF, and mmCIF
 structures. It parses structures with Biopython, runs DSSP, slices beta-sheet
 C-alpha coordinates, fits ellipses to cross sections, applies geometric
