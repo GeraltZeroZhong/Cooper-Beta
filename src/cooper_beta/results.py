@@ -19,6 +19,8 @@ SUMMARY_DISPLAY_NAMES = {
     "result_stage": "Stage",
     "decision_score": "Score",
     "decision_basis": "Basis",
+    "decision_gate": "Gate",
+    "rescue_type": "Rescue",
     "layer_counts": "Valid/Scored/Total",
     "reason": "Reason",
 }
@@ -133,6 +135,8 @@ def _summary_rows(results: Iterable[dict[str, object]]) -> list[dict[str, object
                 "result_stage": result_stage,
                 "decision_score": decision_score,
                 "decision_basis": decision_basis,
+                "decision_gate": str(row.get("decision_gate", "")),
+                "rescue_type": str(row.get("rescue_type", "")),
                 "layer_counts": _layer_counts(row),
                 "reason": str(row.get("reason", "")),
             }

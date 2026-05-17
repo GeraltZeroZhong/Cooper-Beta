@@ -5,12 +5,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+if __package__ in {None, ""}:  # pragma: no cover - path execution convenience
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 try:
     import pandas as pd
 except Exception:
     pd = None
 
-from .runner import evaluate
+if __package__ in {None, ""}:  # pragma: no cover - path execution convenience
+    from cooper_beta.evaluation.runner import evaluate
+else:
+    from .runner import evaluate
 
 
 def ablation_suite() -> list[tuple[str, dict[str, object]]]:
@@ -94,6 +100,8 @@ def _run(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--prepare",
+        "--prepare-workers",
+        "--prep",
         type=int,
         default=None,
         help="Number of preparation workers (default: follows --workers).",

@@ -36,6 +36,7 @@ Install optional tools:
 
 ```bash
 pip install "cooper-beta[eval]"   # pandas for evaluation helpers
+pip install "cooper-beta[scripts]" # dependencies for source-checkout helper scripts
 pip install "cooper-beta[full]"   # all optional extras
 ```
 
@@ -99,13 +100,37 @@ for row in run.rows:
     print(row.filename, row.chain, row.result, row.reason)
 ```
 
+For visualization or debugging of one chain, `extract_chain_slices` returns the
+aligned slice intersections and, optionally, the analyzer's selected sequence
+cores and layer diagnostics:
+
+```python
+from cooper_beta import extract_chain_slices
+
+bundle = extract_chain_slices(
+    "path/to/structure.pdb",
+    chain="A",
+    include_raw_axis_slices=True,
+    include_core_slices=True,
+    include_layer_diagnostics=True,
+)
+
+print(bundle.informative_slices)
+first_z, first_points = next(iter(bundle.raw_axis_slices.items()))
+print(first_z, first_points)
+print(bundle.layer_diagnostics[0].reason)
+```
+
 Public interfaces:
 
 - `cooper_beta.detect(...)`: run detection and return structured results.
+- `cooper_beta.extract_chain_slices(...)`: extract one chain's aligned slice
+  intersections, optional core slices, and optional layer diagnostics.
 - `cooper_beta.main(...)`: backward-compatible entry point returning row dicts.
 - `cooper_beta.build_config(...)`: build an `AppConfig` from overrides.
 - `cooper_beta.PipelineRunResult`: complete run result with `rows`,
   `input_files`, `output_path`, and `result_counts`.
+- `cooper_beta.ChainSliceBundle`: one-chain slice extraction result.
 - `cooper_beta.DetectionResult`: one chain-level result row.
 - `cooper_beta.ProteinLoader`: parse structures and collect per-chain C-alpha
   and DSSP annotations.
@@ -130,8 +155,11 @@ The result CSV includes one row per chain. Core columns include:
 - `chain_residues`, `sheet_residues`, and `informative_slices`
 
 Large directory runs use bounded prepare and analysis batches, and the CLI writes
-the CSV incrementally. The console summary is capped by default; set
-`output.summary_limit=-1` to print every row.
+the CSV with deterministic file/chain ordering. When CSV output is enabled,
+Cooper-Beta also writes `<results.csv>.manifest.json` with the resolved config,
+config hash, package versions, input files, and DSSP executable metadata. The
+console summary is capped by default; set `output.summary_limit=-1` to print
+every row.
 
 ## Evaluation Helpers
 
@@ -171,6 +199,12 @@ external baseline adapters are kept for repository-level reproducibility and
 are intentionally excluded from PyPI package artifacts.
 
 ## Changelog
+
+### 0.1.1
+
+- Engineering-quality hardening release focused on reproducibility, packaging, and public interfaces.
+- Added deterministic result ordering, richer run manifests, safer prepare caching, and clearer decision audit fields.
+- Hardened public scripts, external baseline adapters, mmCIF/DSSP handling, release CI, and package validation.
 
 ### 0.1.0
 

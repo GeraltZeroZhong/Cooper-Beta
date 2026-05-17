@@ -5,6 +5,8 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -12,6 +14,7 @@ if str(ROOT) not in sys.path:
 runner = importlib.import_module("external_methods.foldseek.runner")
 structures = importlib.import_module("external_methods.foldseek.structures")
 structure_search = importlib.import_module("external_methods.foldseek.structure_search")
+evaluate_dataset = importlib.import_module("external_methods.foldseek.evaluate_dataset")
 
 load_hits_tsv = runner.load_hits_tsv
 summarize_hits = runner.summarize_hits
@@ -112,6 +115,35 @@ def test_run_foldseek_adapter_with_fake_runner(tmp_path: Path):
     assert float(rows[0]["score"]) == 0.72
 
 
+def test_run_foldseek_adapter_keeps_no_hit_structure_queries(tmp_path: Path):
+    query_dir = tmp_path / "queries"
+    query_dir.mkdir()
+    query_text = (STRUCTURE_SMOKE_DATA / "toy_barrel.pdb").read_text(encoding="utf-8")
+    (query_dir / "toy_barrel.pdb").write_text(query_text, encoding="utf-8")
+    (query_dir / "toy_nonbarrel.pdb").write_text(query_text, encoding="utf-8")
+
+    results = run_baseline(
+        query_dir,
+        SMOKE_DATA,
+        work_dir=tmp_path / "work",
+        command_prefix=[sys.executable, str(SMOKE_DATA / "fake_foldseek.py")],
+    )
+
+    assert [result.sample_id for result in results] == [
+        "toy_barrel.pdb_A",
+        "toy_nonbarrel.pdb_A",
+    ]
+    assert [result.result for result in results] == ["BARREL", "NON_BARREL"]
+    assert results[1].hit_count == 0
+
+
+def test_foldseek_db_prefix_sidecar_is_accepted(tmp_path: Path):
+    db_prefix = tmp_path / "target_db"
+    Path(f"{db_prefix}.dbtype").write_text("fake db marker\n", encoding="utf-8")
+
+    assert runner._require_foldseek_input(db_prefix, "db") == db_prefix.resolve()
+
+
 def test_run_structure_search_baseline_smoke(tmp_path: Path):
     output_csv = tmp_path / "structure_baseline.csv"
 
@@ -132,3 +164,77 @@ def test_run_structure_search_baseline_smoke(tmp_path: Path):
     assert rows[0]["baseline"] == "foldseek_tmalign_structure_search"
     assert rows[0]["sample_id"] == "toy_barrel_A"
     assert rows[0]["result"] == "BARREL"
+
+
+def test_foldseek_cli_passthrough_requires_explicit_separator():
+    parser = runner.build_arg_parser()
+
+    args, extra_args = runner._parse_args_and_passthrough(
+        parser,
+        ["queries", "target", "--", "--threads", "2"],
+    )
+    assert args.query_structures == "queries"
+    assert extra_args == ["--threads", "2"]
+
+    with pytest.raises(SystemExit):
+        runner._parse_args_and_passthrough(parser, ["queries", "target", "--threads", "2"])
+
+
+def test_foldseek_manual_manifest_validation(tmp_path: Path):
+    missing_column = tmp_path / "missing.csv"
+    missing_column.write_text(
+        "filename,final_split,include_for_metrics,policy\n"
+        "toy.pdb,positive,true,reviewed\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="missing required"):
+        evaluate_dataset._manual_annotations(missing_column)
+
+    invalid_split = tmp_path / "invalid_split.csv"
+    invalid_split.write_text(
+        "filename,final_split,include_for_metrics,policy,reason\n"
+        "toy.pdb,maybe,true,reviewed,manual note\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="invalid final_split"):
+        evaluate_dataset._manual_annotations(invalid_split)
+
+    valid = tmp_path / "valid.csv"
+    valid.write_text(
+        "filename,final_split,include_for_metrics,policy,reason\n"
+        "toy.pdb,negative,yes,reviewed,manual note\n",
+        encoding="utf-8",
+    )
+    annotations = evaluate_dataset._manual_annotations(valid)
+    assert annotations["toy.pdb"]["include_for_metrics"] is True
+    assert annotations["toy.pdb"]["final_split"] == "negative"
+
+
+def test_foldseek_dataset_reports_missing_upstream_results(tmp_path: Path):
+    record = structures.GeneratedStructureChain(
+        sample_id="missing_A",
+        source_path=str(tmp_path / "missing.pdb"),
+        chain_id="A",
+        n_residues=20,
+        chain_path=str(tmp_path / "missing_A.pdb"),
+    )
+    run = evaluate_dataset.SplitRun(
+        split_name="positive",
+        y_true=1,
+        generated=structures.GeneratedStructureSet(
+            output_dir=str(tmp_path),
+            chain_dir=str(tmp_path),
+            manifest_path=str(tmp_path / "manifest.csv"),
+            residue_mapping_path=str(tmp_path / "mapping.csv"),
+            records=[record],
+        ),
+        results=[],
+    )
+
+    with pytest.raises(ValueError, match="did not return results"):
+        evaluate_dataset._chain_rows_for_split(
+            run,
+            reference_metadata={},
+            alignment_type=1,
+            reference_policy="unit",
+        )

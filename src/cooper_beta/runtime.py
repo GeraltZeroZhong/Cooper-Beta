@@ -17,7 +17,18 @@ def _resolve_executable(candidate: str | None) -> str | None:
 
 
 def find_dssp_binary(explicit_path: str | None = None) -> str | None:
-    for candidate in (explicit_path, Config.DSSP_BIN_PATH):
+    if explicit_path:
+        candidate_path = os.path.expanduser(explicit_path)
+        if (
+            os.path.isabs(candidate_path)
+            or os.sep in candidate_path
+            or (os.altsep is not None and os.altsep in candidate_path)
+        ):
+            if os.path.isfile(candidate_path) and os.access(candidate_path, os.X_OK):
+                return os.path.abspath(candidate_path)
+            return None
+        return _resolve_executable(explicit_path)
+    for candidate in (Config.DSSP_BIN_PATH,):
         resolved = _resolve_executable(candidate)
         if resolved:
             return resolved
@@ -38,6 +49,11 @@ def dssp_requirement_message() -> str:
 def require_dssp_binary(explicit_path: str | None = None) -> str:
     dssp_bin = find_dssp_binary(explicit_path)
     if not dssp_bin:
+        if explicit_path:
+            raise DsspNotFoundError(
+                "Configured DSSP executable was not found or is not executable: "
+                f"{explicit_path}"
+            )
         raise DsspNotFoundError(dssp_requirement_message())
     return dssp_bin
 

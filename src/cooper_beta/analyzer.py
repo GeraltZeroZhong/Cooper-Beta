@@ -19,6 +19,7 @@ LEGACY_ANALYZER_OVERRIDE_PATHS = {
     "min_axis": ("fit", "min_axis"),
     "max_axis": ("fit", "max_axis"),
     "max_flattening": ("fit", "max_flattening"),
+    "min_inlier_frac": ("fit", "min_inlier_frac"),
     "valid_ratio": ("decision", "barrel_valid_ratio"),
     "lsq_method": ("fit", "least_squares", "method"),
     "loss": ("fit", "least_squares", "loss"),
@@ -42,6 +43,8 @@ LEGACY_ANALYZER_OVERRIDE_PATHS = {
     "angle_fail_as_junk": ("rules", "angle", "fail_as_junk"),
     "sequence_core_rule_enabled": ("rules", "sequence_core", "enabled"),
 }
+
+MAX_SEQUENCE_CORE_TERMINAL_TRIM = 2
 
 
 class BarrelAnalyzer:
@@ -261,6 +264,12 @@ class BarrelAnalyzer:
         rmse = fit["rmse"]
         fit_cfg = self.config.fit
 
+        if int(fit.get("used_n", 0) or 0) < fit_cfg.min_points_per_slice:
+            base_result["reason"] = "Ellipse fit has too few inlier intersections"
+            return base_result
+        if float(fit.get("inlier_frac", 0.0) or 0.0) < float(fit_cfg.min_inlier_frac):
+            base_result["reason"] = "Ellipse fit inlier fraction is below the minimum threshold"
+            return base_result
         if rmse > fit_cfg.max_rmse:
             base_result["reason"] = f"Ellipse fit RMSE exceeds {fit_cfg.max_rmse}"
             return base_result
@@ -339,7 +348,7 @@ class BarrelAnalyzer:
 
         return fit_improvement or inlier_improvement or order_improvement
 
-    def _select_sequence_core(
+    def select_sequence_core(
         self,
         points: list[tuple[float, ...]] | np.ndarray,
     ) -> tuple[np.ndarray, dict[str, int], dict[str, object]]:
@@ -381,6 +390,13 @@ class BarrelAnalyzer:
             for stop in range(start + minimum_points_for_scoring, total_points + 1):
                 if start == 0 and stop == total_points:
                     continue
+                if start > 0 and stop < total_points:
+                    continue
+                if (
+                    start > MAX_SEQUENCE_CORE_TERMINAL_TRIM
+                    or (total_points - stop) > MAX_SEQUENCE_CORE_TERMINAL_TRIM
+                ):
+                    continue
 
                 candidate = ordered_points[start:stop]
                 candidate_points = candidate[:, :3] if candidate.shape[1] >= 4 else candidate
@@ -402,6 +418,12 @@ class BarrelAnalyzer:
 
         return best_points, diagnostics, best_evaluation
 
+    def _select_sequence_core(
+        self,
+        points: list[tuple[float, ...]] | np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, int], dict[str, object]]:
+        return self.select_sequence_core(points)
+
     def analyze(self, slices_dict: dict[float, list[tuple[float, ...]]]) -> dict[str, object]:
         """
         Analyze active slices and return per-layer diagnostics plus aggregate scores.
@@ -418,6 +440,11 @@ class BarrelAnalyzer:
                 "is_barrel": False,
                 "score": 0.0,
                 "score_adjust": 0.0,
+                "valid_layers": 0,
+                "total_layers": 0,
+                "total_scored_layers": 0,
+                "avg_radius": 0.0,
+                "layer_details": [],
                 "msg": "No active slices were found.",
             }
 
@@ -425,7 +452,7 @@ class BarrelAnalyzer:
 
         for z_value in active_layers:
             points = slices_dict[z_value]
-            selected_points, core_stats, evaluation = self._select_sequence_core(points)
+            selected_points, core_stats, evaluation = self.select_sequence_core(points)
             point_count = int(evaluation["point_count"])
 
             if evaluation["scored"]:

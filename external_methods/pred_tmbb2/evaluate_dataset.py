@@ -78,10 +78,22 @@ MANUAL_EXTRA_FIELDS = [
     "policy",
     "manual_label_reason",
 ]
+MANUAL_REQUIRED_FIELDS = {
+    "filename",
+    "final_split",
+    "include_for_metrics",
+    "policy",
+    "reason",
+}
+MANUAL_FINAL_SPLITS = {"positive", "negative"}
+MANUAL_TRUE_VALUES = {"true", "1", "yes", "y"}
+MANUAL_FALSE_VALUES = {"false", "0", "no", "n"}
 FILE_FIELDS = [
     "split",
     "y_true",
+    "file_id",
     "filename",
+    "source_file",
     "decision_score_max",
     "score_adjust_max",
     "pred_barrel_any",
@@ -142,6 +154,11 @@ def _chain_rows_for_split(run: SplitRun) -> list[dict[str, object]]:
     metadata = _metadata_by_sample(run.generated)
     rows: list[dict[str, object]] = []
     result_by_sample = {result.sample_id: result for result in run.results}
+    missing_samples = sorted(set(metadata) - set(result_by_sample))
+    if missing_samples:
+        preview = ", ".join(missing_samples[:10])
+        suffix = " ..." if len(missing_samples) > 10 else ""
+        raise ValueError(f"PRED-TMBB2 did not return results for sample(s): {preview}{suffix}")
     for sample_id, record in metadata.items():
         result = result_by_sample[sample_id]
         filename = Path(record.source_path).name
@@ -202,11 +219,12 @@ def _file_rows_from_chain_rows(rows: Sequence[dict[str, object]]) -> list[dict[s
     for row in rows:
         if row.get("use_for_metrics") is False:
             continue
-        grouped[str(row["filename"])].append(row)
+        file_id = str(row.get("source_file") or row["filename"])
+        grouped[file_id].append(row)
 
     file_rows: list[dict[str, object]] = []
-    for filename in sorted(grouped):
-        group = grouped[filename]
+    for file_id in sorted(grouped):
+        group = grouped[file_id]
         decision_scores = [float(row["decision_score"]) for row in group]
         score_adjusts = [float(row["score_adjust"]) for row in group]
         pred_any = any(bool(row["pred_barrel"]) for row in group)
@@ -215,7 +233,9 @@ def _file_rows_from_chain_rows(rows: Sequence[dict[str, object]]) -> list[dict[s
             {
                 "split": "true" if y_true == 1 else "false",
                 "y_true": y_true,
-                "filename": filename,
+                "file_id": file_id,
+                "filename": str(group[0]["filename"]),
+                "source_file": str(group[0].get("source_file", "")),
                 "decision_score_max": max(decision_scores) if decision_scores else 0.0,
                 "score_adjust_max": max(score_adjusts) if score_adjusts else 0.0,
                 "pred_barrel_any": pred_any,
@@ -233,30 +253,73 @@ def _boolish(value: object) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes"}
 
 
-def _manual_annotations(path: Path | None) -> dict[str, dict[str, str]]:
+def _parse_manual_bool(value: object, *, filename: str) -> bool:
+    normalized = str(value).strip().lower()
+    if normalized in MANUAL_TRUE_VALUES:
+        return True
+    if normalized in MANUAL_FALSE_VALUES:
+        return False
+    raise ValueError(
+        f"Manual manifest row for {filename!r} has invalid include_for_metrics={value!r}."
+    )
+
+
+def _manual_annotations(path: Path | None) -> dict[str, dict[str, object]]:
     if path is None:
         return {}
-    return {row["filename"]: row for row in _read_csv(path)}
+    annotations: dict[str, dict[str, object]] = {}
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        missing = MANUAL_REQUIRED_FIELDS - set(reader.fieldnames or [])
+        if missing:
+            joined = ", ".join(sorted(missing))
+            raise ValueError(f"Manual manifest is missing required column(s): {joined}")
+        for line_number, row in enumerate(reader, start=2):
+            filename = str(row.get("filename", "")).strip()
+            if not filename:
+                raise ValueError(f"Manual manifest row {line_number} has an empty filename.")
+            if filename in annotations:
+                raise ValueError(f"Manual manifest contains duplicate filename: {filename}")
+            include = _parse_manual_bool(row.get("include_for_metrics"), filename=filename)
+            final_split = str(row.get("final_split", "")).strip().lower()
+            if final_split and final_split not in MANUAL_FINAL_SPLITS:
+                raise ValueError(
+                    f"Manual manifest row for {filename!r} has invalid final_split={final_split!r}."
+                )
+            if include and final_split not in MANUAL_FINAL_SPLITS:
+                raise ValueError(
+                    f"Manual manifest row for {filename!r} must set final_split to "
+                    "'positive' or 'negative' when include_for_metrics is true."
+                )
+            annotations[filename] = {
+                "filename": filename,
+                "final_split": final_split,
+                "include_for_metrics": include,
+                "policy": str(row.get("policy", "")).strip(),
+                "reason": str(row.get("reason", "")).strip(),
+            }
+    return annotations
 
 
 def _apply_manual_annotations(
     chain_rows: Sequence[dict[str, object]],
-    annotations: dict[str, dict[str, str]],
+    annotations: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     reviewed: list[dict[str, object]] = []
     for row in chain_rows:
         filename = str(row["filename"])
-        annotation = annotations.get(filename)
+        file_id = str(row.get("source_file", "") or filename)
+        annotation = annotations.get(file_id) or annotations.get(filename)
         if annotation is None:
             final_split = str(row["original_split"])
             include = True
             policy = "keep_original_label"
             reason = "no explicit correction in manual notes"
         else:
-            include = annotation["include_for_metrics"] == "True"
-            policy = annotation["policy"]
-            reason = annotation["reason"]
-            final_split = annotation["final_split"]
+            include = bool(annotation["include_for_metrics"])
+            policy = str(annotation["policy"])
+            reason = str(annotation["reason"])
+            final_split = str(annotation["final_split"])
 
         updated = dict(row)
         updated["final_split"] = final_split
@@ -280,22 +343,23 @@ def _apply_manual_annotations(
 
 def _with_manual_file_columns(
     file_rows: Sequence[dict[str, object]],
-    annotations: dict[str, dict[str, str]],
+    annotations: dict[str, dict[str, object]],
 ) -> list[dict[str, object]]:
     reviewed: list[dict[str, object]] = []
     for row in file_rows:
         filename = str(row["filename"])
-        annotation = annotations.get(filename)
+        file_id = str(row.get("file_id", "") or row.get("source_file", "") or filename)
+        annotation = annotations.get(file_id) or annotations.get(filename)
         if annotation is None:
             include = True
             final_split = "positive" if int(row["y_true"]) == 1 else "negative"
             policy = "keep_original_label"
             reason = "no explicit correction in manual notes"
         else:
-            include = annotation["include_for_metrics"] == "True"
-            final_split = annotation["final_split"]
-            policy = annotation["policy"]
-            reason = annotation["reason"]
+            include = bool(annotation["include_for_metrics"])
+            final_split = str(annotation["final_split"])
+            policy = str(annotation["policy"])
+            reason = str(annotation["reason"])
         if not include:
             continue
         updated = dict(row)
@@ -489,8 +553,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--juchmme-dir", required=True)
     parser.add_argument(
         "--manual-manifest",
-        default="eval_outputs/notes_aware_manifest_20260425_021152/notes_aware_file_manifest.csv",
-        help="Manual-review manifest with filename/final_split/include_for_metrics/policy/reason.",
+        default="",
+        help=(
+            "Optional manual-review manifest with "
+            "filename/final_split/include_for_metrics/policy/reason."
+        ),
     )
     parser.add_argument("--tag", required=True)
     parser.add_argument("--min-residues", type=int, default=DEFAULT_MIN_RESIDUES)
@@ -525,4 +592,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, NotADirectoryError, OSError, RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc

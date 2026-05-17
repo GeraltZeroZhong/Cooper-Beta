@@ -3,12 +3,18 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import shutil
 import subprocess
+import sys
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+from Bio.PDB.Polypeptide import is_aa
+
+from external_methods.foldseek.structures import _parse_structure, discover_structure_files
 
 BASELINE_NAME = "foldseek_tmalign_structure_search"
 DEFAULT_ALIGNMENT_TYPE = 1
@@ -38,6 +44,16 @@ SUPPORTED_SCORE_MODES = {
     "ttmscore",
     "alntmscore",
 }
+STRUCTURE_SUFFIXES = {".pdb", ".cif", ".mmcif"}
+FOLDSEEK_DB_SIDECARE_SUFFIXES = (
+    ".dbtype",
+    ".index",
+    ".lookup",
+    ".source",
+    ".seq",
+    ".ca",
+    "_h",
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +144,57 @@ def _require_path(path: str | Path, label: str) -> Path:
     return resolved
 
 
+def _foldseek_db_prefix_exists(path: Path) -> bool:
+    if path.exists():
+        return True
+    path_string = str(path)
+    return any(Path(f"{path_string}{suffix}").exists() for suffix in FOLDSEEK_DB_SIDECARE_SUFFIXES)
+
+
+def _require_foldseek_input(path: str | Path, label: str) -> Path:
+    expanded = Path(path).expanduser()
+    resolved = expanded.resolve()
+    if not _foldseek_db_prefix_exists(expanded) and not _foldseek_db_prefix_exists(resolved):
+        raise FileNotFoundError(f"{label} does not exist: {resolved}")
+    return resolved
+
+
+def _infer_query_ids(query_structures: Path) -> list[str] | None:
+    try:
+        structure_paths = discover_structure_files(query_structures)
+    except (FileNotFoundError, ValueError):
+        return None
+
+    query_ids: list[str] = []
+    for structure_path in structure_paths:
+        try:
+            structure = _parse_structure(structure_path)
+            model = structure[0]
+        except Exception:
+            continue
+        for chain in model:
+            residues = [
+                residue
+                for residue in chain.get_unpacked_list()
+                if is_aa(residue, standard=False) and "CA" in residue
+            ]
+            if residues:
+                query_ids.append(f"{structure_path.name}_{chain.id}")
+    return query_ids or None
+
+
+def _read_query_ids(path: str | Path) -> list[str]:
+    id_path = _require_path(path, "Foldseek query id list")
+    ids = [
+        line.strip()
+        for line in id_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if not ids:
+        raise ValueError(f"Foldseek query id list is empty: {id_path}")
+    return ids
+
+
 def _foldseek_prefix(
     foldseek_executable: str | Path | None,
     command_prefix: Sequence[str] | None,
@@ -139,6 +206,11 @@ def _foldseek_prefix(
     executable_path = Path(foldseek_executable).expanduser()
     if executable_path.exists():
         return [str(executable_path.resolve())]
+    if shutil.which(str(foldseek_executable)) is None:
+        raise FileNotFoundError(
+            f"Foldseek executable was not found: {foldseek_executable}. "
+            "Install Foldseek, set FOLDSEEK_BIN, or pass --foldseek."
+        )
     return [str(foldseek_executable)]
 
 
@@ -427,7 +499,7 @@ def _prepare_target(
     timeout: float | None,
 ) -> Path:
     if not build_target_db:
-        return _require_path(target, "Foldseek target DB or structures")
+        return _require_foldseek_input(target, "Foldseek target DB or structures")
 
     target_path = _require_path(target, "Foldseek reference structures")
     target_db = run_dir / "targetDB"
@@ -516,7 +588,8 @@ def run_baseline(
     command_prefix: Sequence[str] | None = None,
     timeout: float | None = None,
 ) -> list[FoldseekResult]:
-    query_path = _require_path(query_structures, "Foldseek query structures")
+    query_path = _require_foldseek_input(query_structures, "Foldseek query structures")
+    resolved_query_ids = list(query_ids) if query_ids is not None else _infer_query_ids(query_path)
 
     def run_in(run_dir: Path) -> list[FoldseekResult]:
         target_input = _prepare_target(
@@ -543,7 +616,7 @@ def run_baseline(
         hits = load_hits_tsv(hits_path)
         return summarize_hits(
             hits,
-            query_ids=query_ids,
+            query_ids=resolved_query_ids,
             query_aliases=query_aliases,
             target_aliases=target_aliases,
             ignore_target_ids_by_query=ignore_target_ids_by_query,
@@ -584,6 +657,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--foldseek", help="Foldseek executable. Defaults to FOLDSEEK_BIN or foldseek.")
     parser.add_argument("--work-dir", help="Working directory for Foldseek raw outputs.")
     parser.add_argument("--out", help="Optional normalized CSV output path.")
+    parser.add_argument(
+        "--query-id-list",
+        help=(
+            "Optional text file with one expected query id per line. "
+            "Used to emit NON_BARREL rows for queries with no Foldseek hits."
+        ),
+    )
     parser.add_argument(
         "--build-target-db",
         action="store_true",
@@ -635,11 +715,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_args_and_passthrough(
+    parser: argparse.ArgumentParser,
+    argv: Sequence[str] | None,
+) -> tuple[argparse.Namespace, list[str]]:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if "--" not in raw_args:
+        return parser.parse_args(raw_args), []
+    passthrough_index = raw_args.index("--")
+    args = parser.parse_args(raw_args[:passthrough_index])
+    return args, raw_args[passthrough_index + 1 :]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
-    args, extra_args = parser.parse_known_args(argv)
-    if extra_args and extra_args[0] == "--":
-        extra_args = extra_args[1:]
+    args, extra_args = _parse_args_and_passthrough(parser, argv)
 
     results = run_baseline(
         args.query_structures,
@@ -647,6 +737,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         foldseek_executable=args.foldseek,
         work_dir=args.work_dir,
         output_path=args.out,
+        query_ids=_read_query_ids(args.query_id_list) if args.query_id_list else None,
         build_target_db=args.build_target_db,
         create_index=args.create_index,
         alignment_type=args.alignment_type,
@@ -664,4 +755,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, NotADirectoryError, OSError, RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc

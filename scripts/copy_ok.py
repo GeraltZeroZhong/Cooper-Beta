@@ -1,31 +1,84 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shutil
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 
-def find_in_source(source_dir: Path, relative_or_name: str, recursive: bool) -> Path | None:
-    candidate = Path(relative_or_name)
+def _safe_lookup_path(root: Path, value: str) -> Path:
+    root = root.expanduser().resolve()
+    candidate = Path(value.strip()).expanduser()
+    if not str(candidate):
+        raise ValueError("Empty filename is not a valid structure path.")
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        try:
+            return resolved.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Structure path escapes --src: {value!r}") from exc
+    if ".." in candidate.parts:
+        raise ValueError(f"Unsafe structure filename in CSV: {value!r}")
+    return candidate
 
-    direct_path = source_dir / candidate
-    if direct_path.exists():
+
+def _resolve_under(root: Path, relative_path: Path) -> Path | None:
+    root = root.expanduser().resolve()
+    resolved = (root / relative_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    return resolved
+
+
+def find_in_source(source_dir: Path, relative_or_name: str, recursive: bool) -> Path | None:
+    source_root = source_dir.expanduser().resolve()
+    candidate = _safe_lookup_path(source_root, relative_or_name)
+
+    direct_path = _resolve_under(source_root, candidate)
+    if direct_path is not None and direct_path.is_file():
         return direct_path
 
-    basename_path = source_dir / candidate.name
-    if basename_path.exists():
+    basename_path = _resolve_under(source_root, Path(candidate.name))
+    if basename_path is not None and basename_path.is_file():
         return basename_path
 
     if recursive:
-        matches = list(source_dir.rglob(candidate.name))
-        if matches:
+        matches = [
+            match.resolve()
+            for match in source_root.rglob(candidate.name)
+            if match.is_file()
+        ]
+        if len(matches) > 1:
+            joined = ", ".join(str(match) for match in matches[:5])
+            suffix = " ..." if len(matches) > 5 else ""
+            raise ValueError(
+                f"Ambiguous recursive match for {candidate.name!r}: {joined}{suffix}"
+            )
+        if len(matches) == 1:
             return matches[0]
     return None
 
 
-def main(argv: list[str] | None = None) -> None:
+def _destination_for_source(
+    destination_dir: Path,
+    source_path: Path,
+    seen_basenames: dict[str, str],
+) -> Path:
+    basename = source_path.name
+    resolved_source = str(source_path.resolve())
+    previous_source = seen_basenames.setdefault(basename, resolved_source)
+    if previous_source == resolved_source:
+        return destination_dir / basename
+    digest = hashlib.sha256(resolved_source.encode("utf-8")).hexdigest()[:8]
+    return destination_dir / f"{source_path.stem}__{digest}{source_path.suffix}"
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Copy or move structure files for OK Cooper-Beta detections into a target folder. "
@@ -58,9 +111,14 @@ def main(argv: list[str] | None = None) -> None:
         help="Move files instead of copying them.",
     )
     parser.add_argument(
-        "--no-overwrite",
+        "--overwrite",
         action="store_true",
-        help="Keep existing destination files instead of overwriting them.",
+        help="Overwrite existing destination files.",
+    )
+    parser.add_argument(
+        "--allow-missing",
+        action="store_true",
+        help="Exit successfully even if some selected files are not found.",
     )
     parser.add_argument(
         "--all",
@@ -79,11 +137,14 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    csv_path = Path(args.csv)
-    source_dir = Path(args.src)
-    destination_dir = Path(args.dst)
+    csv_path = Path(args.csv).expanduser()
+    source_dir = Path(args.src).expanduser().resolve()
+    destination_dir = Path(args.dst).expanduser()
     recursive_search = not args.no_recursive_search
-    overwrite = not args.no_overwrite
+    overwrite = bool(args.overwrite)
+
+    if not source_dir.is_dir():
+        raise NotADirectoryError(f"Source directory does not exist: {source_dir}")
 
     dataframe = pd.read_csv(csv_path)
     if "filename" not in dataframe.columns:
@@ -100,19 +161,16 @@ def main(argv: list[str] | None = None) -> None:
 
     destination_dir.mkdir(parents=True, exist_ok=True)
 
-    filenames = (
-        dataframe["filename"]
-        .dropna()
-        .astype(str)
-        .map(str.strip)
-        .loc[lambda series: series.ne("")]
-        .unique()
-        .tolist()
-    )
+    lookup_values = dataframe["filename"].fillna("").astype(str).map(str.strip)
+    if "source_path" in dataframe.columns:
+        source_paths = dataframe["source_path"].fillna("").astype(str).map(str.strip)
+        lookup_values = source_paths.where(source_paths.ne(""), lookup_values)
+    filenames = lookup_values.loc[lambda series: series.ne("")].unique().tolist()
 
     copied = 0
     skipped = 0
     missing: list[str] = []
+    seen_basenames: dict[str, str] = {}
 
     for filename in filenames:
         source_path = find_in_source(source_dir, filename, recursive_search)
@@ -120,7 +178,7 @@ def main(argv: list[str] | None = None) -> None:
             missing.append(filename)
             continue
 
-        destination_path = destination_dir / source_path.name
+        destination_path = _destination_for_source(destination_dir, source_path, seen_basenames)
         if destination_path.exists() and not overwrite:
             skipped += 1
             continue
@@ -141,7 +199,14 @@ def main(argv: list[str] | None = None) -> None:
         missing_path = destination_dir / "missing_files.txt"
         missing_path.write_text("\n".join(missing), encoding="utf-8")
         print(f"Missing-file list written to: {missing_path}")
+        if not args.allow_missing:
+            return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, NotADirectoryError, OSError, RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc

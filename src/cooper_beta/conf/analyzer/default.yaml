@@ -4,6 +4,7 @@ fit:
   min_axis: 3.0
   max_axis: 199.0
   max_flattening: 3.5
+  min_inlier_frac: 0.60
   least_squares:
     # OpenCV's fitEllipseDirect() is now the default fitter.
     # Keep these legacy keys for backward-compatible config parsing; only
@@ -41,8 +42,13 @@ decision:
     sparse_min_sheet_residues: 70
     sparse_max_avg_radius: 35.0
   near_miss_rescue:
-    enabled: true
-    soft_nn_enabled: true
+    enabled: false
+    # Near-miss rescues are available for calibrated experiments, but are off
+    # in the default publication profile because they can bypass the main
+    # barrel-valid threshold.
+    # Disabled by default because this proxy-only rescue can otherwise classify
+    # chains with zero ellipse-scored layers as BARREL.
+    soft_nn_enabled: false
     soft_nn_min_layers: 3
     soft_nn_min_inlier_frac: 0.70
     soft_nn_max_robust_cv: 0.20

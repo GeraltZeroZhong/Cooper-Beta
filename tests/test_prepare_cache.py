@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from cooper_beta.config import build_config
 from cooper_beta.pipeline_workers import prepare_file_batch, prepare_one_file
+from cooper_beta.prepare_cache import _executable_state
 
 
 class FakeChain:
@@ -73,6 +75,53 @@ def test_prepare_cache_invalidates_when_file_changes(tmp_path: Path, monkeypatch
     assert isinstance(first, list)
     assert isinstance(second, list)
     assert FakeLoader.calls == 2
+
+
+def test_prepare_cache_invalidates_when_same_size_file_content_changes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    input_file = tmp_path / "toy.pdb"
+    input_file.write_text("HEADER\n")
+
+    cfg = build_config(
+        {
+            "input.min_chain_residues": 1,
+            "runtime.prepare_cache_enabled": True,
+            "runtime.prepare_cache_dir": str(tmp_path / "cache"),
+        }
+    )
+
+    monkeypatch.setattr("cooper_beta.pipeline_workers.ProteinLoader", FakeLoader)
+    FakeLoader.calls = 0
+
+    first = prepare_one_file(str(input_file), cfg)
+    stat = input_file.stat()
+    input_file.write_text("HEADEQ\n")
+    os.utime(input_file, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    second = prepare_one_file(str(input_file), cfg)
+
+    assert isinstance(first, list)
+    assert isinstance(second, list)
+    assert FakeLoader.calls == 2
+
+
+def test_executable_cache_state_includes_content_hash(tmp_path: Path):
+    executable = tmp_path / "mkdssp"
+    executable.write_text("version-a\n", encoding="utf-8")
+    executable.chmod(0o755)
+    first = _executable_state(str(executable))
+    assert first is not None
+
+    stat = executable.stat()
+    executable.write_text("version-b\n", encoding="utf-8")
+    os.utime(executable, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    second = _executable_state(str(executable))
+
+    assert second is not None
+    assert first["size"] == second["size"]
+    assert first["mtime_ns"] == second["mtime_ns"]
+    assert first["sha256"] != second["sha256"]
 
 
 def test_prepare_file_batch_aggregates_payloads_and_errors(monkeypatch):

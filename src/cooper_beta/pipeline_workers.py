@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -259,7 +260,7 @@ def _aligned_coordinates_for_rotation(
     return np.dot(np.asarray(coordinates, dtype=float) - np.asarray(center, dtype=float), rotation_matrix)
 
 
-def _select_alignment_slices(
+def select_alignment_slices(
     aligner: PCAAligner,
     coordinates: np.ndarray,
     residues_data: list[dict[str, object]],
@@ -318,11 +319,22 @@ def _select_alignment_slices(
     return best_slices
 
 
+def _select_alignment_slices(
+    aligner: PCAAligner,
+    coordinates: np.ndarray,
+    residues_data: list[dict[str, object]],
+    slicer: ProteinSlicer,
+    cfg: AppConfig,
+) -> dict[float, list[tuple[float, ...]]]:
+    return select_alignment_slices(aligner, coordinates, residues_data, slicer, cfg)
+
+
 def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[str, object]:
     """
     Analyze one chain payload and return the final row written to the results table.
     """
     filename = str(payload.get("filename", ""))
+    source_path = str(payload.get("source_path", ""))
     chain_id = str(payload.get("chain", ""))
     residues_data = list(payload.get("residues_data", []) or [])
     min_chain_residues = cfg.input.min_chain_residues
@@ -374,6 +386,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
         )
         return {
             "filename": filename,
+            "source_path": source_path,
             "chain": chain_id,
             "result": result,
             "result_stage": result_stage,
@@ -396,6 +409,9 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
             "sheet_residues": int(report.get("sheet_residues", sheet_residue_count)),
             "informative_slices": informative_slice_count,
             "reason": reason,
+            "decision_gate": str(report.get("decision_gate", "")),
+            "rescue_type": str(report.get("rescue_type", "")),
+            "guard_blocked": bool(report.get("guard_blocked", False)),
             # Keep the legacy names for downstream notebooks and older CSV consumers.
             "all_adjusted_layers": scored_layers,
             "all_layers": total_layers,
@@ -432,7 +448,7 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
     try:
         aligner = PCAAligner()
         aligner.fit(sheet_coordinates)
-        slices = _select_alignment_slices(
+        slices = select_alignment_slices(
             aligner,
             all_coordinates,
             residues_data,
@@ -488,40 +504,52 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
         )
 
     rescue_cfg = decision_cfg.small_barrel_rescue
+    small_barrel_base_match = (
+        final_score >= float(rescue_cfg.min_score)
+        and total_scored_layers >= int(rescue_cfg.min_scored_layers)
+        and total_layers >= int(rescue_cfg.min_total_layers)
+        and 0.0 < avg_radius <= float(rescue_cfg.max_avg_radius)
+    )
+    small_barrel_compact_match = (
+        bool(rescue_cfg.compact_enabled)
+        and final_score >= float(rescue_cfg.compact_min_score)
+        and total_scored_layers >= int(rescue_cfg.compact_min_scored_layers)
+        and total_layers >= int(rescue_cfg.compact_min_total_layers)
+        and total_layers <= int(rescue_cfg.compact_max_total_layers)
+        and chain_residue_count >= int(rescue_cfg.compact_min_chain_residues)
+        and sheet_residue_count >= int(rescue_cfg.compact_min_sheet_residues)
+        and 0.0 < avg_radius <= float(rescue_cfg.compact_max_avg_radius)
+    )
+    small_barrel_sparse_match = (
+        bool(rescue_cfg.sparse_enabled)
+        and final_score >= float(rescue_cfg.sparse_min_score)
+        and total_scored_layers >= int(rescue_cfg.sparse_min_scored_layers)
+        and total_layers >= int(rescue_cfg.sparse_min_total_layers)
+        and chain_residue_count >= int(rescue_cfg.sparse_min_chain_residues)
+        and chain_residue_count <= int(rescue_cfg.sparse_max_chain_residues)
+        and sheet_residue_count >= int(rescue_cfg.sparse_min_sheet_residues)
+        and 0.0 < avg_radius <= float(rescue_cfg.sparse_max_avg_radius)
+    )
     rescued_small_barrel = (
         decision_cfg.use_adjusted_score
         and exceptions_enabled
         and (not enough_scored_layers)
         and bool(rescue_cfg.enabled)
         and (
-            (
-                final_score >= float(rescue_cfg.min_score)
-                and total_scored_layers >= int(rescue_cfg.min_scored_layers)
-                and total_layers >= int(rescue_cfg.min_total_layers)
-                and 0.0 < avg_radius <= float(rescue_cfg.max_avg_radius)
-            )
-            or (
-                bool(rescue_cfg.compact_enabled)
-                and final_score >= float(rescue_cfg.compact_min_score)
-                and total_scored_layers >= int(rescue_cfg.compact_min_scored_layers)
-                and total_layers >= int(rescue_cfg.compact_min_total_layers)
-                and total_layers <= int(rescue_cfg.compact_max_total_layers)
-                and chain_residue_count >= int(rescue_cfg.compact_min_chain_residues)
-                and sheet_residue_count >= int(rescue_cfg.compact_min_sheet_residues)
-                and 0.0 < avg_radius <= float(rescue_cfg.compact_max_avg_radius)
-            )
-            or (
-                bool(rescue_cfg.sparse_enabled)
-                and final_score >= float(rescue_cfg.sparse_min_score)
-                and total_scored_layers >= int(rescue_cfg.sparse_min_scored_layers)
-                and total_layers >= int(rescue_cfg.sparse_min_total_layers)
-                and chain_residue_count >= int(rescue_cfg.sparse_min_chain_residues)
-                and chain_residue_count <= int(rescue_cfg.sparse_max_chain_residues)
-                and sheet_residue_count >= int(rescue_cfg.sparse_min_sheet_residues)
-                and 0.0 < avg_radius <= float(rescue_cfg.sparse_max_avg_radius)
-            )
+            small_barrel_base_match
+            or small_barrel_compact_match
+            or small_barrel_sparse_match
         )
     )
+
+    small_barrel_rescue_type = ""
+    if rescued_small_barrel:
+        if small_barrel_base_match:
+            small_barrel_rescue_type = "small_barrel"
+        elif small_barrel_compact_match:
+            small_barrel_rescue_type = "small_barrel_compact"
+        elif small_barrel_sparse_match:
+            small_barrel_rescue_type = "small_barrel_sparse"
 
     near_miss_cfg = decision_cfg.near_miss_rescue
     soft_nn_layers = 0
@@ -550,57 +578,70 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
             ):
                 soft_nn_layers += 1
 
+    near_miss_soft_nn_match = (
+        bool(near_miss_cfg.soft_nn_enabled)
+        and total_scored_layers == 0
+        and final_score > 0.0
+        and soft_nn_layers >= int(near_miss_cfg.soft_nn_min_layers)
+        and total_layers >= int(near_miss_cfg.soft_nn_min_total_layers)
+        and total_layers <= int(near_miss_cfg.soft_nn_max_total_layers)
+        and chain_residue_count >= int(near_miss_cfg.soft_nn_min_chain_residues)
+        and chain_residue_count <= int(near_miss_cfg.soft_nn_max_chain_residues)
+        and sheet_residue_count >= int(near_miss_cfg.soft_nn_min_sheet_residues)
+        and sheet_residue_count <= int(near_miss_cfg.soft_nn_max_sheet_residues)
+    )
+    near_miss_compact_partner_match = (
+        bool(near_miss_cfg.compact_partner_enabled)
+        and final_score >= float(near_miss_cfg.compact_partner_min_score)
+        and valid_layers >= int(near_miss_cfg.compact_partner_min_valid_layers)
+        and total_scored_layers
+        >= int(near_miss_cfg.compact_partner_min_scored_layers)
+        and total_layers >= int(near_miss_cfg.compact_partner_min_total_layers)
+        and total_layers <= int(near_miss_cfg.compact_partner_max_total_layers)
+        and chain_residue_count
+        >= int(near_miss_cfg.compact_partner_min_chain_residues)
+        and chain_residue_count
+        <= int(near_miss_cfg.compact_partner_max_chain_residues)
+        and sheet_residue_count
+        >= int(near_miss_cfg.compact_partner_min_sheet_residues)
+        and sheet_residue_count
+        <= int(near_miss_cfg.compact_partner_max_sheet_residues)
+        and avg_radius >= float(near_miss_cfg.compact_partner_min_avg_radius)
+        and avg_radius <= float(near_miss_cfg.compact_partner_max_avg_radius)
+    )
+    near_miss_large_partner_match = (
+        bool(near_miss_cfg.large_partner_enabled)
+        and final_score >= float(near_miss_cfg.large_partner_min_score)
+        and valid_layers >= int(near_miss_cfg.large_partner_min_valid_layers)
+        and total_scored_layers >= int(near_miss_cfg.large_partner_min_scored_layers)
+        and total_layers >= int(near_miss_cfg.large_partner_min_total_layers)
+        and chain_residue_count >= int(near_miss_cfg.large_partner_min_chain_residues)
+        and sheet_residue_count >= int(near_miss_cfg.large_partner_min_sheet_residues)
+        and avg_radius >= float(near_miss_cfg.large_partner_min_avg_radius)
+        and avg_radius <= float(near_miss_cfg.large_partner_max_avg_radius)
+    )
     rescued_near_miss = (
         decision_cfg.use_adjusted_score
         and exceptions_enabled
         and bool(near_miss_cfg.enabled)
         and (
-            (
-                bool(near_miss_cfg.soft_nn_enabled)
-                and total_scored_layers == 0
-                and soft_nn_layers >= int(near_miss_cfg.soft_nn_min_layers)
-                and total_layers >= int(near_miss_cfg.soft_nn_min_total_layers)
-                and total_layers <= int(near_miss_cfg.soft_nn_max_total_layers)
-                and chain_residue_count >= int(near_miss_cfg.soft_nn_min_chain_residues)
-                and chain_residue_count <= int(near_miss_cfg.soft_nn_max_chain_residues)
-                and sheet_residue_count >= int(near_miss_cfg.soft_nn_min_sheet_residues)
-                and sheet_residue_count <= int(near_miss_cfg.soft_nn_max_sheet_residues)
-            )
-            or (
-                bool(near_miss_cfg.compact_partner_enabled)
-                and final_score >= float(near_miss_cfg.compact_partner_min_score)
-                and valid_layers >= int(near_miss_cfg.compact_partner_min_valid_layers)
-                and total_scored_layers
-                >= int(near_miss_cfg.compact_partner_min_scored_layers)
-                and total_layers >= int(near_miss_cfg.compact_partner_min_total_layers)
-                and total_layers <= int(near_miss_cfg.compact_partner_max_total_layers)
-                and chain_residue_count
-                >= int(near_miss_cfg.compact_partner_min_chain_residues)
-                and chain_residue_count
-                <= int(near_miss_cfg.compact_partner_max_chain_residues)
-                and sheet_residue_count
-                >= int(near_miss_cfg.compact_partner_min_sheet_residues)
-                and sheet_residue_count
-                <= int(near_miss_cfg.compact_partner_max_sheet_residues)
-                and avg_radius >= float(near_miss_cfg.compact_partner_min_avg_radius)
-                and avg_radius <= float(near_miss_cfg.compact_partner_max_avg_radius)
-            )
-            or (
-                bool(near_miss_cfg.large_partner_enabled)
-                and final_score >= float(near_miss_cfg.large_partner_min_score)
-                and valid_layers >= int(near_miss_cfg.large_partner_min_valid_layers)
-                and total_scored_layers >= int(near_miss_cfg.large_partner_min_scored_layers)
-                and total_layers >= int(near_miss_cfg.large_partner_min_total_layers)
-                and chain_residue_count >= int(near_miss_cfg.large_partner_min_chain_residues)
-                and sheet_residue_count >= int(near_miss_cfg.large_partner_min_sheet_residues)
-                and avg_radius >= float(near_miss_cfg.large_partner_min_avg_radius)
-                and avg_radius <= float(near_miss_cfg.large_partner_max_avg_radius)
-            )
+            near_miss_soft_nn_match
+            or near_miss_compact_partner_match
+            or near_miss_large_partner_match
         )
     )
 
+    near_miss_rescue_type = ""
+    if rescued_near_miss:
+        if near_miss_soft_nn_match:
+            near_miss_rescue_type = "near_miss_soft_nn"
+        elif near_miss_compact_partner_match:
+            near_miss_rescue_type = "near_miss_compact_partner"
+        elif near_miss_large_partner_match:
+            near_miss_rescue_type = "near_miss_large_partner"
+
     guard_cfg = decision_cfg.low_sheet_wide_guard
-    blocked_low_sheet_wide = (
+    guard_condition_met = (
         decision_cfg.use_adjusted_score
         and exceptions_enabled
         and bool(guard_cfg.enabled)
@@ -616,7 +657,22 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
         ((enough_scored_layers or rescued_small_barrel) and threshold_pass)
         or rescued_near_miss
     )
-    is_barrel = passes_barrel_decision and not blocked_low_sheet_wide
+    guard_applied = passes_barrel_decision and guard_condition_met
+    is_barrel = passes_barrel_decision and not guard_applied
+    rescue_type = small_barrel_rescue_type or near_miss_rescue_type
+    if is_barrel:
+        if rescue_type:
+            decision_gate = "rescue"
+        elif threshold_pass:
+            decision_gate = "threshold"
+        else:
+            decision_gate = "decision"
+    elif guard_applied:
+        decision_gate = "guard_blocked"
+    elif not enough_scored_layers:
+        decision_gate = "insufficient_scored_layers"
+    else:
+        decision_gate = "failed_threshold"
 
     invalid_reasons: list[str] = []
     junk_reasons: list[str] = []
@@ -650,12 +706,15 @@ def analyze_chain_payload(payload: dict[str, object], cfg: AppConfig) -> dict[st
             "chain_residues": chain_residue_count,
             "sheet_residues": sheet_residue_count,
             "informative_slices": informative_slice_count,
+            "decision_gate": decision_gate,
+            "rescue_type": rescue_type,
+            "guard_blocked": guard_applied,
         }
     )
 
     if is_barrel:
-        reason = "OK"
-    elif passes_barrel_decision and blocked_low_sheet_wide:
+        reason = f"Rescued by {rescue_type}" if rescue_type else "OK"
+    elif guard_applied:
         reason = (
             "Short low-sheet chain has an unusually large fitted barrel radius "
             f"(chain residues {chain_residue_count} <= {int(guard_cfg.max_chain_residues)}, "
@@ -685,6 +744,7 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
     """
     Parse a structure once, run DSSP once, and produce per-chain payloads.
     """
+    source_path = str(Path(file_path).expanduser().resolve())
     filename = os.path.basename(file_path)
     try:
         cached_payloads = load_prepare_payloads(file_path, cfg)
@@ -697,7 +757,7 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
             fail_on_dssp_error=cfg.runtime.fail_on_dssp_error,
         )
     except Exception as exc:
-        return PrepareFailure(f"{filename}: {exc}")
+        return PrepareFailure(f"{source_path}: {exc}")
 
     payloads: list[dict[str, object]] = []
     for chain in loader.model:
@@ -705,11 +765,12 @@ def prepare_one_file(file_path: str, cfg: AppConfig) -> list[dict[str, object]] 
         try:
             residues_data = loader.get_chain_data(chain_id)
         except Exception as exc:
-            return PrepareFailure(f"{filename}: {exc}")
+            return PrepareFailure(f"{source_path}: {exc}")
 
         payloads.append(
             {
                 "filename": filename,
+                "source_path": source_path,
                 "chain": chain_id,
                 "residues_data": residues_data,
             }
@@ -904,6 +965,7 @@ def analyze_payload_batch(
             rows.append(
                 {
                     "filename": str(payload.get("filename", "")),
+                    "source_path": str(payload.get("source_path", "")),
                     "chain": str(payload.get("chain", "")),
                     "result": RESULT_ERROR,
                     "result_stage": "error",
