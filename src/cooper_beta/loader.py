@@ -171,6 +171,7 @@ class ProteinLoader:
         self.model = None
         self.secondary_structure = None
         self.secondary_structure_error = None
+        self._structure_file_type = ""
 
         self._load_structure()
 
@@ -188,10 +189,12 @@ class ProteinLoader:
                 if ext in [".cif", ".mmcif"]:
                     parser = MMCIFParser(QUIET=True)
                     self.structure = parser.get_structure("struct", parse_path)
+                    self._structure_file_type = "MMCIF"
                 else:
                     # Important: disable header parsing.
                     parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
                     self.structure = parser.get_structure("struct", parse_path)
+                    self._structure_file_type = "PDB"
 
             self.model = self.structure[self.model_id]
             return
@@ -206,6 +209,7 @@ class ProteinLoader:
                         warnings.simplefilter("ignore", BiopythonWarning)
                         parser = PDBParser(QUIET=True, PERMISSIVE=True, get_header=False)
                         self.structure = parser.get_structure("struct", tmp)
+                    self._structure_file_type = "PDB"
                     self.model = self.structure[self.model_id]
                     return
                 except Exception as e2:
@@ -240,7 +244,12 @@ class ProteinLoader:
             io.save(handle, select=_ProteinOnlySelect())
         return tmp_path
 
-    def _run_dssp(self, tmp_path: str) -> dict[tuple[str, tuple[str, int, str]], str]:
+    def _run_dssp(
+        self,
+        tmp_path: str,
+        *,
+        file_type: str = "PDB",
+    ) -> dict[tuple[str, tuple[str, int, str]], str]:
         dssp_bin = require_dssp_binary(self.dssp_bin)
         with warnings.catch_warnings():
             warnings.filterwarnings(
@@ -248,7 +257,7 @@ class ProteinLoader:
                 message=_DSSP_PDB_MMCIF_WARNING_PATTERN,
                 category=UserWarning,
             )
-            dssp_result = DSSP(self.model, tmp_path, dssp=dssp_bin)
+            dssp_result = DSSP(self.model, tmp_path, dssp=dssp_bin, file_type=file_type)
         return {dssp_key: str(dssp_result[dssp_key][2]) for dssp_key in dssp_result.keys()}
 
     def _run_secondary_structure(self):
@@ -257,10 +266,17 @@ class ProteinLoader:
 
         tmp_path = None
         try:
-            # Export protein ATOM records only. Dropping HETATM helps avoid
-            # nonpoly_scheme strand/duplicate key issues.
-            tmp_path = self._export_protein_only_pdb()
-            self.secondary_structure = self._run_dssp(tmp_path)
+            if self._structure_file_type == "MMCIF":
+                # Keep mmCIF chain identifiers intact. Exporting to PDB would
+                # fail for valid multi-character chain IDs and bias mmCIF runs.
+                tmp_path = _decompress_gzip_to_temp_if_needed(self.file_path)
+                dssp_input = tmp_path or self.file_path
+                self.secondary_structure = self._run_dssp(dssp_input, file_type="MMCIF")
+            else:
+                # Export protein ATOM records only. Dropping HETATM helps avoid
+                # nonpoly_scheme strand/duplicate key issues in PDB mode.
+                tmp_path = self._export_protein_only_pdb()
+                self.secondary_structure = self._run_dssp(tmp_path, file_type="PDB")
 
         except Exception as e:
             self.secondary_structure_error = f"DSSP failed for {os.path.basename(self.file_path)}: {e}"
@@ -298,6 +314,7 @@ class ProteinLoader:
             self._run_secondary_structure()
 
         data = []
+        chain_residue_ids = {res.id for res in chain}
         for res in chain:
             if not is_aa(res, standard=False):
                 continue
@@ -305,13 +322,33 @@ class ProteinLoader:
                 continue
 
             dssp_key = (chain.id, res.id)
+            hetfield, resseq, icode = res.id
             ss_code = "-"
-            if self.secondary_structure and dssp_key in self.secondary_structure:
-                ss_code = self.secondary_structure[dssp_key]
+            if self.secondary_structure:
+                if dssp_key in self.secondary_structure:
+                    ss_code = self.secondary_structure[dssp_key]
+                else:
+                    fallback_id = (" ", resseq, icode)
+                    fallback_key = (chain.id, fallback_id)
+                    if (
+                        hetfield != " "
+                        and fallback_id not in chain_residue_ids
+                        and fallback_key in self.secondary_structure
+                    ):
+                        ss_code = self.secondary_structure[fallback_key]
 
             data.append(
                 {
-                    "res_id": res.id[1],
+                    "res_id": resseq,
+                    "resseq": resseq,
+                    "icode": str(icode).strip(),
+                    "hetfield": str(hetfield).strip(),
+                    "res_uid": {
+                        "chain": chain.id,
+                        "hetfield": str(hetfield).strip(),
+                        "resseq": resseq,
+                        "icode": str(icode).strip(),
+                    },
                     "chain": chain.id,
                     "coord": res["CA"].get_coord(),
                     "is_sheet": ss_code in ("E", "B"),

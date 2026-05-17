@@ -66,21 +66,22 @@ class LeastSquaresConfig:
 @dataclass
 class EllipseFitConfig:
     min_points_per_slice: int = 7
-    max_rmse: float = 3.0
+    max_rmse: float = 6.0
     min_axis: float = 3.0
     max_axis: float = 199.0
     max_flattening: float = 3.5
+    min_inlier_frac: float = 0.60
     least_squares: LeastSquaresConfig = field(default_factory=LeastSquaresConfig)
 
 
 @dataclass
 class SmallBarrelRescueConfig:
-    enabled: bool = False
+    enabled: bool = True
     min_score: float = 0.999
     min_scored_layers: int = 5
     min_total_layers: int = 25
     max_avg_radius: float = 10.5
-    compact_enabled: bool = False
+    compact_enabled: bool = True
     compact_min_score: float = 0.999
     compact_min_scored_layers: int = 4
     compact_min_total_layers: int = 18
@@ -88,7 +89,7 @@ class SmallBarrelRescueConfig:
     compact_min_chain_residues: int = 120
     compact_min_sheet_residues: int = 60
     compact_max_avg_radius: float = 12.5
-    sparse_enabled: bool = False
+    sparse_enabled: bool = True
     sparse_min_score: float = 0.85
     sparse_min_scored_layers: int = 3
     sparse_min_total_layers: int = 35
@@ -111,7 +112,7 @@ class NearMissRescueConfig:
     soft_nn_max_chain_residues: int = 260
     soft_nn_min_sheet_residues: int = 60
     soft_nn_max_sheet_residues: int = 80
-    compact_partner_enabled: bool = False
+    compact_partner_enabled: bool = True
     compact_partner_min_score: float = 0.50
     compact_partner_min_valid_layers: int = 1
     compact_partner_min_scored_layers: int = 2
@@ -123,7 +124,7 @@ class NearMissRescueConfig:
     compact_partner_max_sheet_residues: int = 85
     compact_partner_min_avg_radius: float = 8.0
     compact_partner_max_avg_radius: float = 13.0
-    large_partner_enabled: bool = False
+    large_partner_enabled: bool = True
     large_partner_min_score: float = 0.55
     large_partner_min_valid_layers: int = 11
     large_partner_min_scored_layers: int = 14
@@ -150,7 +151,7 @@ class DecisionConfig:
     use_adjusted_score: bool = True
     min_intersections_for_scoring: int = 7
     min_scored_layer_frac: float = 0.31
-    min_scored_layers: int = 9
+    min_scored_layers: int = 7
     exception_layer_enabled: bool = True
     small_barrel_rescue: SmallBarrelRescueConfig = field(
         default_factory=SmallBarrelRescueConfig
@@ -185,14 +186,14 @@ class NearestNeighborRuleConfig:
 class AngleOrderRuleConfig:
     enabled: bool = True
     local_step_max: int = 1
-    min_local_frac: float = 1.0
-    max_mean_circ_dist_norm: float = 0.0
+    min_local_frac: float = 0.90
+    max_mean_circ_dist_norm: float = 0.10
 
 
 @dataclass
 class AngleRuleConfig:
     enabled: bool = True
-    max_gap_deg: float = 80.0
+    max_gap_deg: float = 160.0
     fail_as_junk: bool = False
     order: AngleOrderRuleConfig = field(default_factory=AngleOrderRuleConfig)
 
@@ -238,6 +239,7 @@ LEGACY_OVERRIDE_PATHS = {
     "MIN_AXIS": "analyzer.fit.min_axis",
     "MAX_AXIS": "analyzer.fit.max_axis",
     "MAX_FLATTENING": "analyzer.fit.max_flattening",
+    "MIN_INLIER_FRAC": "analyzer.fit.min_inlier_frac",
     "LSQ_METHOD": "analyzer.fit.least_squares.method",
     "LSQ_LOSS": "analyzer.fit.least_squares.loss",
     "LSQ_F_SCALE": "analyzer.fit.least_squares.f_scale",
@@ -387,6 +389,7 @@ def validate_config(cfg: AppConfig) -> None:
         raise ConfigValidationError("`analyzer.fit.max_axis` must be >= `analyzer.fit.min_axis`.")
     if float(fit.max_flattening) < 1.0:
         raise ConfigValidationError("`analyzer.fit.max_flattening` must be >= 1.")
+    _require_ratio("analyzer.fit.min_inlier_frac", float(fit.min_inlier_frac))
     _require_positive("analyzer.fit.least_squares.f_scale", float(fit.least_squares.f_scale))
 
     decision = cfg.analyzer.decision

@@ -244,6 +244,8 @@ def test_analyze_chain_payload_blocks_short_low_sheet_wide_radius(
 
     assert row["result"] == RESULT_NON_BARREL
     assert row["decision_score"] == pytest.approx(1.0)
+    assert row["decision_gate"] == "guard_blocked"
+    assert row["guard_blocked"] is True
     assert row["reason"].startswith(
         "Short low-sheet chain has an unusually large fitted barrel radius"
     )
@@ -283,7 +285,44 @@ def test_exception_layer_switch_disables_low_sheet_wide_guard(
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
     assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+
+
+def test_low_sheet_wide_guard_is_only_marked_when_it_blocks_a_barrel(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    cfg = AppConfig()
+    cfg.input.min_chain_residues = 20
+    cfg.input.min_sheet_residues = 10
+    cfg.input.min_informative_slices = 4
+    cfg.analyzer.decision.barrel_valid_ratio = 0.85
+    cfg.analyzer.decision.min_scored_layer_frac = 0.31
+    cfg.analyzer.decision.min_scored_layers = 7
+
+    payload = {
+        "filename": "wide-short-chain.pdb",
+        "chain": "A",
+        "residues_data": [
+            _residue(float(index), 0.0, float(index), is_sheet=index < 86)
+            for index in range(174)
+        ],
+    }
+    report = {
+        "score": 8.0 / 26.0,
+        "score_adjust": 0.5,
+        "valid_layers": 8,
+        "total_layers": 26,
+        "total_scored_layers": 15,
+        "avg_radius": 16.5,
+        "layer_details": [{"reason": "OK"} for _ in range(8)],
+    }
+    _install_analysis_stubs(monkeypatch, report=report, slice_count=26)
+
+    row = pipeline_workers.analyze_chain_payload(payload, cfg)
+
+    assert row["result"] == RESULT_NON_BARREL
+    assert row["decision_gate"] == "failed_threshold"
+    assert row["guard_blocked"] is False
+    assert row["reason"] == "Too few valid slices"
 
 
 def test_analyze_chain_payload_rescues_high_confidence_small_barrel(
@@ -326,7 +365,9 @@ def test_analyze_chain_payload_rescues_high_confidence_small_barrel(
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
     assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+    assert row["reason"] == "Rescued by small_barrel"
+    assert row["decision_gate"] == "rescue"
+    assert row["rescue_type"] == "small_barrel"
     assert row["decision_score"] == pytest.approx(1.0)
     assert row["scored_layers"] == 5
 
@@ -413,7 +454,9 @@ def test_analyze_chain_payload_rescues_compact_high_confidence_barrel(
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
     assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+    assert row["reason"] == "Rescued by small_barrel_compact"
+    assert row["decision_gate"] == "rescue"
+    assert row["rescue_type"] == "small_barrel_compact"
     assert row["scored_layers"] == 4
 
 
@@ -452,11 +495,13 @@ def test_analyze_chain_payload_rescues_sparse_high_confidence_barrel(
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
     assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+    assert row["reason"] == "Rescued by small_barrel_sparse"
+    assert row["decision_gate"] == "rescue"
+    assert row["rescue_type"] == "small_barrel_sparse"
     assert row["scored_layers"] == 3
 
 
-def test_analyze_chain_payload_rescues_soft_nn_near_miss(
+def test_analyze_chain_payload_does_not_rescue_soft_nn_without_scored_layers(
     monkeypatch: pytest.MonkeyPatch,
 ):
     cfg = AppConfig()
@@ -500,8 +545,8 @@ def test_analyze_chain_payload_rescues_soft_nn_near_miss(
 
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
-    assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+    assert row["result"] == RESULT_NON_BARREL
+    assert row["reason"].startswith("Too few scored slices")
 
 
 def test_analyze_chain_payload_does_not_soft_nn_rescue_scored_sparse_barrel(
@@ -589,7 +634,9 @@ def test_analyze_chain_payload_rescues_compact_partner_near_miss(
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
     assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+    assert row["reason"] == "Rescued by near_miss_compact_partner"
+    assert row["decision_gate"] == "rescue"
+    assert row["rescue_type"] == "near_miss_compact_partner"
 
 
 def test_analyze_chain_payload_rescues_large_partner_near_miss(
@@ -627,7 +674,9 @@ def test_analyze_chain_payload_rescues_large_partner_near_miss(
     row = pipeline_workers.analyze_chain_payload(payload, cfg)
 
     assert row["result"] == RESULT_BARREL
-    assert row["reason"] == "OK"
+    assert row["reason"] == "Rescued by near_miss_large_partner"
+    assert row["decision_gate"] == "rescue"
+    assert row["rescue_type"] == "near_miss_large_partner"
 
 
 def test_analyze_chain_payload_uses_raw_score_when_configured(monkeypatch: pytest.MonkeyPatch):

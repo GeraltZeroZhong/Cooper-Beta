@@ -17,5 +17,6 @@ real-data/
 old-data/
 tools/foldseek/
 tools/foldseek-linux-*.tar.gz
+plot/
 __pycache__/
 *.py[cod]

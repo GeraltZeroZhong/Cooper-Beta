@@ -14,6 +14,10 @@ class ResidueRecord:
     coord: Any
     is_sheet: bool
     chain: str | None = None
+    resseq: int | None = None
+    icode: str = ""
+    hetfield: str = ""
+    res_uid: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -26,6 +30,7 @@ class PreparedChainPayload:
     filename: str
     chain: str
     residues_data: list[dict[str, object]]
+    source_path: str = ""
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> PreparedChainPayload:
@@ -33,6 +38,7 @@ class PreparedChainPayload:
             filename=str(payload.get("filename", "")),
             chain=str(payload.get("chain", "")),
             residues_data=list(payload.get("residues_data", []) or []),
+            source_path=str(payload.get("source_path", "")),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -124,6 +130,42 @@ class AnalysisReport:
 
 
 @dataclass(frozen=True)
+class ChainSliceBundle:
+    """Structured slice bundle for one prepared and aligned chain."""
+
+    structure_path: str
+    filename: str
+    chain: str
+    chain_residues: int
+    sheet_residues: int
+    informative_slices: int
+    raw_axis_slices: dict[float, list[tuple[float, ...]]] | None = None
+    core_slices: dict[float, list[tuple[float, ...]]] | None = None
+    layer_diagnostics: list[LayerDiagnostic] | None = None
+    analysis_report: AnalysisReport | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "structure_path": self.structure_path,
+            "filename": self.filename,
+            "chain": self.chain,
+            "chain_residues": self.chain_residues,
+            "sheet_residues": self.sheet_residues,
+            "informative_slices": self.informative_slices,
+            "raw_axis_slices": self.raw_axis_slices,
+            "core_slices": self.core_slices,
+            "layer_diagnostics": (
+                [layer.to_dict() for layer in self.layer_diagnostics]
+                if self.layer_diagnostics is not None
+                else None
+            ),
+            "analysis_report": (
+                self.analysis_report.to_dict() if self.analysis_report is not None else None
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class DetectionResult:
     """Stable public result for one structure chain."""
 
@@ -132,6 +174,7 @@ class DetectionResult:
     result: str
     result_stage: str
     reason: str
+    source_path: str = ""
     decision_score: float = 0.0
     decision_basis: str = ""
     decision_threshold: float = 0.0
@@ -167,6 +210,7 @@ class DetectionResult:
         return cls(
             filename=str(row.get("filename", "")),
             chain=str(row.get("chain", "")),
+            source_path=str(row.get("source_path", "")),
             result=str(row.get("result", "")),
             result_stage=str(row.get("result_stage", "")),
             reason=str(row.get("reason", "")),

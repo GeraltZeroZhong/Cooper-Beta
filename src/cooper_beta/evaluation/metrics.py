@@ -12,6 +12,7 @@ def ensure_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
     dataframe = dataframe.copy()
     for column in [
         "filename",
+        "source_path",
         "chain",
         "result",
         "result_stage",
@@ -34,6 +35,9 @@ def ensure_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
         "all_adjusted_layers",
         "all_layers",
         "reason",
+        "decision_gate",
+        "rescue_type",
+        "guard_blocked",
     ]:
         if column not in dataframe.columns:
             dataframe[column] = None
@@ -123,8 +127,15 @@ def compute_chain_metrics(
 def compute_file_metrics(
     aggregated_dataframe: pd.DataFrame,
 ) -> tuple[dict[str, float | int], dict[str, int]]:
-    positives = aggregated_dataframe[aggregated_dataframe["split"] == "true"].copy()
-    negatives = aggregated_dataframe[aggregated_dataframe["split"] == "false"].copy()
+    if "use_for_metrics" in aggregated_dataframe.columns:
+        use_mask = aggregated_dataframe["use_for_metrics"].astype(bool)
+    else:
+        use_mask = pd.Series(True, index=aggregated_dataframe.index)
+    dropped = aggregated_dataframe.loc[~use_mask].copy()
+    used = aggregated_dataframe.loc[use_mask].copy()
+
+    positives = used[used["split"] == "true"].copy()
+    negatives = used[used["split"] == "false"].copy()
     filtered_column = (
         "any_filtered_out" if "any_filtered_out" in aggregated_dataframe.columns else "any_skip"
     )
@@ -138,6 +149,8 @@ def compute_file_metrics(
     extra = {
         "n_true_files": int(len(positives)),
         "n_false_files": int(len(negatives)),
+        "dropped_true_error_files": int((dropped["split"] == "true").sum()),
+        "dropped_false_error_files": int((dropped["split"] == "false").sum()),
         "true_any_filtered_out": (
             int(positives[filtered_column].astype(int).sum()) if len(positives) else 0
         ),

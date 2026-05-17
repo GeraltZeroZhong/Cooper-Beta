@@ -7,6 +7,7 @@ import pytest
 import cooper_beta.pipeline_workers as pipeline_workers
 from cooper_beta.config import build_config
 from cooper_beta.pipeline import (
+    _ordered_result_rows,
     detect,
     discover_input_files,
     resolve_analysis_worker_count,
@@ -162,6 +163,43 @@ def test_run_pipeline_reports_all_prepare_failures(tmp_path: Path, monkeypatch):
     assert "parse failed" in csv_text
 
 
+def test_run_pipeline_writes_empty_csv_when_no_payloads_are_produced(
+    tmp_path: Path,
+    monkeypatch,
+):
+    input_file = tmp_path / "empty.pdb"
+    input_file.write_text("HEADER\n")
+    output_file = tmp_path / "results.csv"
+    cfg = build_config(
+        {
+            "input.path": str(tmp_path),
+            "output.csv_path": str(output_file),
+            "runtime.workers": 1,
+            "runtime.prepare_workers": 1,
+        }
+    )
+
+    def fake_iter_prepared_payload_batches(files, cfg_arg, prepare_workers, **kwargs):
+        del files, cfg_arg, prepare_workers, kwargs
+        if False:
+            yield []
+
+    monkeypatch.setattr("cooper_beta.pipeline.require_dssp_binary", lambda explicit_path: "/opt/dssp/mkdssp")
+    monkeypatch.setattr(
+        "cooper_beta.pipeline.iter_prepared_payload_batches",
+        fake_iter_prepared_payload_batches,
+    )
+
+    result = run_pipeline_result(cfg, print_summary=False, strict_input=True, show_progress=False)
+
+    assert result.rows == []
+    assert output_file.exists()
+    assert output_file.read_text(encoding="utf-8").startswith(
+        "filename,source_path,chain,result"
+    )
+    assert output_file.with_suffix(".csv.manifest.json").exists()
+
+
 def test_discover_input_files_is_case_insensitive(tmp_path: Path):
     mixed_case = tmp_path / "example.mmCIF"
     mixed_case.write_text("data_example\n")
@@ -240,4 +278,48 @@ def test_write_results_csv_writes_schema_for_empty_results(tmp_path: Path):
     write_results_csv([], str(output_file))
 
     header = output_file.read_text(encoding="utf-8").splitlines()[0]
-    assert header.startswith("filename,chain,result,result_stage")
+    assert header.startswith("filename,source_path,chain,result,result_stage")
+
+
+def test_ordered_result_rows_follow_input_file_and_chain_order():
+    rows = [
+        {"filename": "b.pdb", "chain": "B", "result": "NON_BARREL"},
+        {"filename": "a.pdb", "chain": "C", "result": "NON_BARREL"},
+        {"filename": "a.pdb", "chain": "A", "result": "BARREL"},
+    ]
+
+    ordered = _ordered_result_rows(rows, ["/input/a.pdb", "/input/b.pdb"])
+
+    assert [(row["filename"], row["chain"]) for row in ordered] == [
+        ("a.pdb", "A"),
+        ("a.pdb", "C"),
+        ("b.pdb", "B"),
+    ]
+
+
+def test_ordered_result_rows_use_source_path_for_duplicate_basenames(tmp_path: Path):
+    first = tmp_path / "first" / "same.pdb"
+    second = tmp_path / "second" / "same.pdb"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("HEADER first\n")
+    second.write_text("HEADER second\n")
+
+    rows = [
+        {
+            "filename": "same.pdb",
+            "source_path": str(second),
+            "chain": "A",
+            "result": "NON_BARREL",
+        },
+        {
+            "filename": "same.pdb",
+            "source_path": str(first),
+            "chain": "A",
+            "result": "BARREL",
+        },
+    ]
+
+    ordered = _ordered_result_rows(rows, [str(first), str(second)])
+
+    assert [row["source_path"] for row in ordered] == [str(first), str(second)]

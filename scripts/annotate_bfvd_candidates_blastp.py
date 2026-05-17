@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -103,6 +104,29 @@ class BlastHit:
     stitle: str
 
 
+CANDIDATE_FIELDS = list(Candidate.__dataclass_fields__)
+ANNOTATION_FIELDS = [
+    "query_id",
+    "filename",
+    "chain",
+    "source_path",
+    "sequence_length",
+    "sequence_status",
+    "cooper_beta_score",
+    "annotation_status",
+    "annotation_label",
+    "low_information_title",
+    "top_saccver",
+    "top_pident",
+    "top_qcovs",
+    "top_evalue",
+    "top_bitscore",
+    "top_species",
+    "top_kingdom",
+    "top_title",
+]
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -112,12 +136,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--results",
-        default="eval_outputs/bfvd_full_20260425_040946/results.csv",
+        required=True,
         help="Cooper-Beta results CSV.",
     )
     parser.add_argument(
         "--structures",
-        default="BFVD",
+        required=True,
         help="Directory containing BFVD PDB files.",
     )
     parser.add_argument(
@@ -255,26 +279,62 @@ def read_candidate_rows(results_path: Path, result: str, reason: str) -> tuple[l
     return rows, total_rows
 
 
+def _safe_lookup_path(root: Path, value: str) -> Path:
+    root = root.expanduser().resolve()
+    candidate = Path(value.strip()).expanduser()
+    if not str(candidate):
+        raise ValueError("Empty filename is not a valid structure path.")
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        try:
+            return resolved.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Structure path escapes --structures: {value!r}") from exc
+    if ".." in candidate.parts:
+        raise ValueError(f"Unsafe structure filename in results CSV: {value!r}")
+    return candidate
+
+
+def _resolve_under(root: Path, relative_path: Path) -> Path | None:
+    root = root.expanduser().resolve()
+    resolved = (root / relative_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    return resolved
+
+
 def resolve_structure_path(
     structures_dir: Path,
     filename: str,
     recursive: bool,
     cache: dict[str, Path | None],
 ) -> Path | None:
-    direct = structures_dir / filename
-    if direct.exists():
+    structures_root = structures_dir.expanduser().resolve()
+    candidate = _safe_lookup_path(structures_root, filename)
+    direct = _resolve_under(structures_root, candidate)
+    if direct is not None and direct.is_file():
         return direct
 
-    basename = Path(filename).name
-    fallback = structures_dir / basename
-    if fallback.exists():
+    basename = candidate.name
+    fallback = _resolve_under(structures_root, Path(basename))
+    if fallback is not None and fallback.is_file():
         return fallback
 
     if not recursive:
         return None
 
     if basename not in cache:
-        matches = list(structures_dir.rglob(basename))
+        matches = [
+            match.resolve()
+            for match in structures_root.rglob(basename)
+            if match.is_file()
+        ]
+        if len(matches) > 1:
+            joined = ", ".join(str(match) for match in matches[:5])
+            suffix = " ..." if len(matches) > 5 else ""
+            raise ValueError(f"Ambiguous recursive match for {basename!r}: {joined}{suffix}")
         cache[basename] = matches[0] if matches else None
     return cache[basename]
 
@@ -325,19 +385,24 @@ def build_candidates(
     for row in selected_rows:
         filename = row["filename"].strip()
         chain = row.get("chain", "").strip()
-        key = (filename, chain)
+        lookup_path = row.get("source_path", "").strip() or filename
+        source_path = resolve_structure_path(structures_dir, lookup_path, recursive, path_cache)
+        source_key = str(source_path.resolve()) if source_path is not None else lookup_path
+        key = (source_key, chain)
         if key in seen:
             duplicates += 1
             continue
         seen.add(key)
 
         base_query_id = sanitize_query_id(f"{Path(filename).stem}__chain_{chain or 'blank'}")
+        if row.get("source_path", "").strip():
+            digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:8]
+            base_query_id = sanitize_query_id(f"{base_query_id}__{digest}")
         query_id_counts[base_query_id] += 1
         query_id = base_query_id
         if query_id_counts[base_query_id] > 1:
             query_id = f"{base_query_id}__{query_id_counts[base_query_id]}"
 
-        source_path = resolve_structure_path(structures_dir, filename, recursive, path_cache)
         sequence = ""
         status = "missing_structure"
         if source_path is not None:
@@ -375,11 +440,10 @@ def write_fasta(sequences: dict[str, str], path: Path) -> None:
 
 def write_candidate_manifest(candidates: list[Candidate], path: Path) -> None:
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(asdict(candidates[0]).keys()) if candidates else [])
-        if candidates:
-            writer.writeheader()
-            for candidate in candidates:
-                writer.writerow(asdict(candidate))
+        writer = csv.DictWriter(handle, fieldnames=CANDIDATE_FIELDS)
+        writer.writeheader()
+        for candidate in candidates:
+            writer.writerow(asdict(candidate))
 
 
 def run_blastp(args: argparse.Namespace, fasta_path: Path, blast_tsv: Path) -> list[str]:
@@ -538,6 +602,7 @@ def annotate_candidates(
                 "query_id": candidate.query_id,
                 "filename": candidate.filename,
                 "chain": candidate.chain,
+                "source_path": candidate.source_path,
                 "sequence_length": candidate.sequence_length,
                 "sequence_status": candidate.sequence_status,
                 "cooper_beta_score": candidate.decision_score,
@@ -555,9 +620,8 @@ def annotate_candidates(
             }
         )
 
-    fieldnames = list(rows[0].keys()) if rows else []
     with path.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=ANNOTATION_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -693,6 +757,10 @@ def main(argv: list[str] | None = None) -> int:
     results_path = Path(args.results)
     structures_dir = Path(args.structures)
     out_dir = Path(args.out_dir)
+    if not results_path.exists():
+        raise FileNotFoundError(f"Results CSV does not exist: {results_path}")
+    if not structures_dir.exists():
+        raise FileNotFoundError(f"Structures directory does not exist: {structures_dir}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     candidates_csv = out_dir / "candidate_manifest.csv"

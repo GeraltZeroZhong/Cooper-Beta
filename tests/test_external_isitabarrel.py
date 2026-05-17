@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -97,3 +98,20 @@ def test_run_structure_map_baseline_smoke(tmp_path: Path):
     assert rows[0]["baseline"] == "isitabarrel_structure_map"
     assert rows[0]["sample_id"] == "toy_barrel_A"
     assert rows[0]["result"] == "BARREL"
+
+
+def test_isitabarrel_cli_passthrough_requires_explicit_separator():
+    parser = runner.build_arg_parser()
+
+    args, extra_args = runner._parse_args_and_passthrough(
+        parser,
+        ["ids.tsv", "maps", "--", "--upstream-flag", "1"],
+    )
+    assert args.protid_list == "ids.tsv"
+    assert extra_args == ["--upstream-flag", "1"]
+
+    with pytest.raises(SystemExit):
+        runner._parse_args_and_passthrough(
+            parser,
+            ["ids.tsv", "maps", "--upstream-flag", "1"],
+        )

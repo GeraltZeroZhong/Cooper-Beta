@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cooper-beta"
-version = "0.1.0"
+version = "0.1.1"
 description = "Beta-barrel-like chain detector for PDB/mmCIF structures."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,8 +34,15 @@ dependencies = [
 eval = [
   "pandas>=1.5",
 ]
+scripts = [
+  "pandas>=1.5",
+  "matplotlib>=3.7",
+  "lxml>=4.9",
+]
 full = [
   "pandas>=1.5",
+  "matplotlib>=3.7",
+  "lxml>=4.9",
 ]
 dev = [
   "pytest>=7.0",

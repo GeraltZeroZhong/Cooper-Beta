@@ -6,7 +6,7 @@ DEFAULT_INPUT_PATH = ""
 DEFAULT_OUTPUT_CSV = "cooper_beta_results.csv"
 DEFAULT_ALLOWED_SUFFIXES = (".pdb", ".cif", ".mmcif")
 DEFAULT_SLICE_STEP_SIZE = 1.0
-DEFAULT_FILL_SHEET_HOLE_LENGTH = 1
+DEFAULT_FILL_SHEET_HOLE_LENGTH = 0
 
 DEFAULT_MIN_CHAIN_RESIDUES = 20
 DEFAULT_MIN_SHEET_RESIDUES = 10
@@ -33,6 +33,7 @@ LEGACY_RESULT_SKIP = "SKIP"
 
 DEFAULT_RESULT_COLUMNS = (
     "filename",
+    "source_path",
     "chain",
     "result",
     "result_stage",
@@ -53,6 +54,9 @@ DEFAULT_RESULT_COLUMNS = (
     "sheet_residues",
     "informative_slices",
     "reason",
+    "decision_gate",
+    "rescue_type",
+    "guard_blocked",
     "all_adjusted_layers",
     "all_layers",
 )
@@ -64,6 +68,8 @@ DEFAULT_SUMMARY_COLUMNS = (
     "result_stage",
     "decision_score",
     "decision_basis",
+    "decision_gate",
+    "rescue_type",
     "layer_counts",
     "reason",
 )
@@ -75,6 +81,8 @@ SUMMARY_COLUMN_WIDTHS = {
     "result_stage": 10,
     "decision_score": 8,
     "decision_basis": 8,
+    "decision_gate": 14,
+    "rescue_type": 24,
     "layer_counts": 18,
     "reason": 56,
 }

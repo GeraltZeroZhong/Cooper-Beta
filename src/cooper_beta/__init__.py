@@ -17,6 +17,7 @@ __all__ = [
     "AnalysisReport",
     "Config",
     "ConfigValidationError",
+    "ChainSliceBundle",
     "ChainNotFoundError",
     "CooperBetaError",
     "DetectionResult",
@@ -34,6 +35,7 @@ __all__ = [
     "BarrelAnalyzer",
     "build_config",
     "detect",
+    "extract_chain_slices",
     "find_dssp_binary",
     "require_dssp_binary",
     "main",
@@ -42,6 +44,7 @@ __all__ = [
 
 from .alignment import PCAAligner
 from .analyzer import BarrelAnalyzer
+from .chain_slices import extract_chain_slices
 from .config import AppConfig, Config, build_config
 from .exceptions import (
     ChainNotFoundError,
@@ -55,6 +58,7 @@ from .exceptions import (
 from .loader import ProteinLoader
 from .models import (
     AnalysisReport,
+    ChainSliceBundle,
     DetectionResult,
     LayerDiagnostic,
     PipelineRunResult,

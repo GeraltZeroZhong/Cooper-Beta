@@ -430,6 +430,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--workers", type=int, default=None, help="Analysis workers.")
     parser.add_argument(
         "--prepare",
+        "--prepare-workers",
+        "--prep",
         type=int,
         default=None,
         help="Preparation workers (default: follows --workers).",

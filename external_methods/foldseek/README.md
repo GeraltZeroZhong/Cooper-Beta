@@ -84,7 +84,8 @@ installing or vendoring GPL code.
 ## Cooper-Beta Dataset Evaluation
 
 The dataset evaluator mirrors the existing external baseline table layout and
-writes both raw-label and manual-reviewed outputs:
+writes both raw-label and manual-reviewed outputs. Manual relabeling is applied
+only when `--manual-manifest` is explicitly provided:
 
 ```bash
 python external_methods/foldseek/evaluate_dataset.py \

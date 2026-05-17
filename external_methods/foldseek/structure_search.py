@@ -167,11 +167,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_args_and_passthrough(
+    parser: argparse.ArgumentParser,
+    argv: Sequence[str] | None,
+) -> tuple[argparse.Namespace, list[str]]:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if "--" not in raw_args:
+        return parser.parse_args(raw_args), []
+    passthrough_index = raw_args.index("--")
+    args = parser.parse_args(raw_args[:passthrough_index])
+    return args, raw_args[passthrough_index + 1 :]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
-    args, extra_args = parser.parse_known_args(argv)
-    if extra_args and extra_args[0] == "--":
-        extra_args = extra_args[1:]
+    args, extra_args = _parse_args_and_passthrough(parser, argv)
 
     run = run_structure_search_baseline(
         args.structure_input,
@@ -204,4 +214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, NotADirectoryError, OSError, RuntimeError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc

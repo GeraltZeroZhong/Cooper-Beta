@@ -67,6 +67,25 @@ def test_slice_structure_uses_only_segments_inside_same_sheet_run():
     assert slices[1.0] == [(2.0, 0.0, 1.5, 0.0)]
 
 
+def test_short_hole_filling_does_not_merge_distinct_sheet_runs():
+    slicer = ProteinSlicer(step_size=1.0, fill_sheet_hole_length=1)
+    aligned_coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [2.0, 0.0, 2.0],
+        ],
+        dtype=float,
+    )
+    residues_data = [
+        {"is_sheet": True},
+        {"is_sheet": False},
+        {"is_sheet": True},
+    ]
+
+    assert slicer.slice_structure(aligned_coords, residues_data) == {}
+
+
 def test_sequence_angle_order_collapses_multiple_intersections_per_strand():
     strand_angles = np.linspace(0.0, 2.0 * np.pi, 6, endpoint=False)
     points = []
@@ -128,3 +147,34 @@ def test_analyzer_keeps_clean_slice_without_terminal_trimming():
     assert layer["n_points"] == 12
     assert layer["seq_core_trim_left"] == 0
     assert layer["seq_core_trim_right"] == 0
+
+
+def test_analyzer_rejects_low_support_ellipse_fit(monkeypatch: pytest.MonkeyPatch):
+    analyzer = BarrelAnalyzer(AnalyzerConfig())
+
+    def low_support_fit(points):
+        del points
+        return {
+            "xc": 0.0,
+            "yc": 0.0,
+            "a": 10.0,
+            "b": 8.0,
+            "theta": 0.0,
+            "rmse": 0.0,
+            "rmse_all": 0.0,
+            "median_abs_dist": 0.0,
+            "used_n": 3.0,
+            "inlier_frac": 0.25,
+        }
+
+    monkeypatch.setattr(analyzer, "fit_slice", low_support_fit)
+    points = [
+        (10.0 * np.cos(angle), 8.0 * np.sin(angle), float(index) + 0.5, float(index))
+        for index, angle in enumerate(np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False))
+    ]
+
+    report = analyzer.analyze({0.0: points})
+    layer = report["layer_details"][0]
+
+    assert layer["valid"] is False
+    assert layer["reason"] == "Ellipse fit has too few inlier intersections"

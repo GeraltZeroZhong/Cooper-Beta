@@ -3,12 +3,17 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
+from .bootstrap import configure_thread_environment
 from .config import AppConfig, build_config, sync_legacy_config, validate_config
 from .exceptions import InputValidationError
 from .models import PipelineRunResult
-from .pipeline_workers import iter_prepared_payload_batches, run_analysis_stream
-from .results import ResultCsvWriter, print_results_summary, write_results_csv
-from .runtime import require_dssp_binary
+
+configure_thread_environment()
+
+from .pipeline_workers import iter_prepared_payload_batches, run_analysis_stream  # noqa: E402
+from .provenance import write_run_manifest  # noqa: E402
+from .results import ResultCsvWriter, print_results_summary, write_results_csv  # noqa: E402
+from .runtime import require_dssp_binary  # noqa: E402
 
 
 def discover_input_files(
@@ -94,10 +99,12 @@ def apply_runtime_overrides(
 def _prepare_error_rows(errors: list[str]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for error in errors:
-        filename, _, detail = error.partition(":")
+        source, _, detail = error.partition(":")
+        source = source.strip()
         rows.append(
             {
-                "filename": filename.strip(),
+                "filename": Path(source).name if source else "",
+                "source_path": source,
                 "chain": "",
                 "result": "ERROR",
                 "result_stage": "prepare",
@@ -105,6 +112,33 @@ def _prepare_error_rows(errors: list[str]) -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def _ordered_result_rows(
+    rows: list[dict[str, object]],
+    input_files: list[str],
+) -> list[dict[str, object]]:
+    """Return rows in input file order, then chain order, for reproducible output."""
+    file_order: dict[str, int] = {}
+    for index, file_path in enumerate(input_files):
+        basename = Path(file_path).name
+        file_order.setdefault(str(file_path), index)
+        file_order.setdefault(str(Path(file_path).expanduser().resolve()), index)
+        file_order.setdefault(basename, index)
+
+    def sort_key(row: dict[str, object]) -> tuple[int, str, str, str, str]:
+        filename = str(row.get("filename", ""))
+        source_path = str(row.get("source_path", ""))
+        primary_id = source_path or filename
+        return (
+            file_order.get(primary_id, file_order.get(filename, len(file_order))),
+            source_path,
+            filename,
+            str(row.get("chain", "")),
+            str(row.get("result_stage", "")),
+        )
+
+    return sorted(rows, key=sort_key)
 
 
 def run_pipeline_result(
@@ -116,6 +150,7 @@ def run_pipeline_result(
     show_progress: bool = True,
 ) -> PipelineRunResult:
     """Run the full beta-barrel detection pipeline and return structured results."""
+    configure_thread_environment()
     cfg = deepcopy(cfg)
     validate_config(cfg)
 
@@ -127,6 +162,7 @@ def run_pipeline_result(
         if write_csv:
             with ResultCsvWriter(cfg.output.csv_path):
                 pass
+            write_run_manifest(config=cfg, input_files=files, output_path=cfg.output.csv_path)
         output_path = cfg.output.csv_path if write_csv else None
         return PipelineRunResult.from_rows([], input_files=files, output_path=output_path, config=cfg)
 
@@ -157,39 +193,28 @@ def run_pipeline_result(
         on_errors=record_prepare_errors,
         show_progress=show_progress,
     )
-    if write_csv:
-        with ResultCsvWriter(cfg.output.csv_path) as writer:
-            results = run_analysis_stream(
-                payload_batches,
-                cfg,
-                analysis_workers,
-                on_results=writer.write_rows,
-                show_progress=show_progress,
-            )
-            prepare_rows = _prepare_error_rows(prepare_errors)
-            if prepare_rows:
-                writer.write_rows(prepare_rows)
-    else:
-        results = run_analysis_stream(
-            payload_batches,
-            cfg,
-            analysis_workers,
-            show_progress=show_progress,
-        )
-        prepare_rows = _prepare_error_rows(prepare_errors)
+    results = run_analysis_stream(
+        payload_batches,
+        cfg,
+        analysis_workers,
+        show_progress=show_progress,
+    )
+    prepare_rows = _prepare_error_rows(prepare_errors)
 
-    all_results = [*results, *prepare_rows]
+    all_results = _ordered_result_rows([*results, *prepare_rows], files)
     if prepare_rows and not results:
         if print_summary:
             print_results_summary(
                 all_results,
                 cfg.output.csv_path,
                 summary_limit=cfg.output.summary_limit,
-                write_csv=False,
+                write_csv=write_csv,
                 output_written=write_csv,
             )
         elif write_csv:
             write_results_csv(all_results, cfg.output.csv_path)
+        if write_csv:
+            write_run_manifest(config=cfg, input_files=files, output_path=cfg.output.csv_path)
         raise InputValidationError(
             f"All {len(files)} input file(s) failed during preparation."
         )
@@ -199,6 +224,9 @@ def run_pipeline_result(
             print("No analyzable chain payloads were produced.")
             if write_csv:
                 print(f"\nResults written to: {cfg.output.csv_path}")
+        if write_csv:
+            write_results_csv([], cfg.output.csv_path)
+            write_run_manifest(config=cfg, input_files=files, output_path=cfg.output.csv_path)
         output_path = cfg.output.csv_path if write_csv else None
         return PipelineRunResult.from_rows([], input_files=files, output_path=output_path, config=cfg)
 
@@ -207,9 +235,13 @@ def run_pipeline_result(
             all_results,
             cfg.output.csv_path,
             summary_limit=cfg.output.summary_limit,
-            write_csv=False,
+            write_csv=write_csv,
             output_written=write_csv,
         )
+    elif write_csv:
+        write_results_csv(all_results, cfg.output.csv_path)
+    if write_csv:
+        write_run_manifest(config=cfg, input_files=files, output_path=cfg.output.csv_path)
     output_path = cfg.output.csv_path if write_csv else None
     return PipelineRunResult.from_rows(
         all_results,

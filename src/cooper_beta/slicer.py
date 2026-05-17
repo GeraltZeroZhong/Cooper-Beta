@@ -97,13 +97,15 @@ class ProteinSlicer:
         if n < 2:
             return {}
 
-        # 1) Preprocess beta-sheet flags by filling one-residue holes.
-        sheet_flags = [bool(r.get("is_sheet", False)) for r in residues_data]
+        # 1) Preprocess beta-sheet flags by filling short holes for segment
+        # continuity, but keep strand identities anchored to the original DSSP
+        # runs. This avoids merging two physical strands separated by a turn.
+        original_sheet_flags = [bool(r.get("is_sheet", False)) for r in residues_data]
         sheet_flags = self._fill_short_holes(
-            sheet_flags,
+            original_sheet_flags,
             max_hole_len=self.fill_sheet_hole_length,
         )
-        sheet_run_ids, sheet_run_seq_pos = self._assign_sheet_runs(sheet_flags)
+        sheet_run_ids, sheet_run_seq_pos = self._assign_sheet_runs(original_sheet_flags)
 
         # 2) Determine the slice index range. Use integer k to avoid accumulating
         # floating-point error.

@@ -5,6 +5,8 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -12,6 +14,7 @@ if str(ROOT) not in sys.path:
 runner = importlib.import_module("external_methods.pred_tmbb2.runner")
 sequences = importlib.import_module("external_methods.pred_tmbb2.sequences")
 structure_sequence = importlib.import_module("external_methods.pred_tmbb2.structure_sequence")
+evaluate_dataset = importlib.import_module("external_methods.pred_tmbb2.evaluate_dataset")
 
 parse_juchmme_stdout = runner.parse_juchmme_stdout
 run_baseline = runner.run_baseline
@@ -92,3 +95,48 @@ def test_run_structure_sequence_baseline_smoke(tmp_path: Path):
     assert rows[0]["baseline"] == "pred_tmbb2_single_juchmme"
     assert rows[0]["sample_id"] == "toy_barrel_A"
     assert rows[0]["result"] == "BARREL"
+
+
+def test_pred_tmbb2_manual_manifest_validation(tmp_path: Path):
+    invalid_include = tmp_path / "invalid_include.csv"
+    invalid_include.write_text(
+        "filename,final_split,include_for_metrics,policy,reason\n"
+        "toy.pdb,positive,maybe,reviewed,manual note\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="include_for_metrics"):
+        evaluate_dataset._manual_annotations(invalid_include)
+
+    excluded = tmp_path / "excluded.csv"
+    excluded.write_text(
+        "filename,final_split,include_for_metrics,policy,reason\n"
+        "toy.pdb,,no,excluded,manual note\n",
+        encoding="utf-8",
+    )
+    annotations = evaluate_dataset._manual_annotations(excluded)
+    assert annotations["toy.pdb"]["include_for_metrics"] is False
+    assert annotations["toy.pdb"]["final_split"] == ""
+
+
+def test_pred_tmbb2_dataset_reports_missing_upstream_results(tmp_path: Path):
+    record = sequences.GeneratedSequence(
+        sample_id="missing_A",
+        source_path=str(tmp_path / "missing.pdb"),
+        chain_id="A",
+        n_residues=20,
+        sequence="A" * 20,
+    )
+    run = evaluate_dataset.SplitRun(
+        split_name="positive",
+        y_true=1,
+        generated=sequences.GeneratedFastaSet(
+            output_dir=str(tmp_path),
+            fasta_path=str(tmp_path / "input.fasta"),
+            residue_mapping_path=str(tmp_path / "mapping.csv"),
+            records=[record],
+        ),
+        results=[],
+    )
+
+    with pytest.raises(ValueError, match="did not return results"):
+        evaluate_dataset._chain_rows_for_split(run)

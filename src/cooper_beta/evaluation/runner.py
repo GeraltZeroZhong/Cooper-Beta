@@ -71,6 +71,9 @@ def save_outputs(
         decorated = ensure_columns(dataframe)
         decorated["y_true"] = y_true
         decorated["split"] = split
+        source_path = decorated["source_path"].fillna("").astype(str).str.strip()
+        filename = decorated["filename"].fillna("").astype(str)
+        decorated["file_id"] = source_path.where(source_path.ne(""), filename)
         result_series = decorated["result"].astype(str).str.upper()
         decorated["is_error"] = result_series.eq("ERROR")
         decorated["is_filtered_out"] = _is_filtered_result(result_series)
@@ -78,7 +81,7 @@ def save_outputs(
         decorated["pred_barrel"] = result_series.eq("BARREL")
         decorated["use_for_metrics"] = ~decorated["is_error"]
         decorated["sample_id"] = (
-            decorated["filename"].astype(str) + ":" + decorated["chain"].astype(str)
+            decorated["file_id"].astype(str) + ":" + decorated["chain"].astype(str)
         )
         decorated["decision_score"] = (
             pd.to_numeric(decorated["decision_score"], errors="coerce")
@@ -96,13 +99,17 @@ def save_outputs(
     chain_output = save_dir / f"eval_chain_results_{tag}.csv"
     combined.to_csv(chain_output, index=False)
 
-    no_error = combined[combined["use_for_metrics"]].copy()
-    aggregated = no_error.groupby(["split", "y_true", "filename"], as_index=False).agg(
+    aggregated = combined.groupby(["split", "y_true", "file_id"], as_index=False).agg(
+        filename=("filename", "first"),
+        source_path=("source_path", "first"),
         decision_score_max=("decision_score", "max"),
         score_adjust_max=("score_adjust", "max"),
         pred_barrel_any=("pred_barrel", "max"),
         any_filtered_out=("is_filtered_out", "max"),
         any_skip=("is_skip", "max"),
+        all_error=("is_error", "min"),
+        error_chains_n=("is_error", "sum"),
+        use_for_metrics=("use_for_metrics", "max"),
         chains_n=("sample_id", "count"),
     )
     file_output = save_dir / f"eval_file_results_{tag}.csv"
@@ -122,6 +129,8 @@ def evaluate(
     detector_overrides: dict[str, object] | list[str] | None = None,
     print_metric_tables: bool = True,
 ) -> dict[str, object]:
+    if metric_level not in {"chain", "file", "both"}:
+        raise ValueError("metric_level must be one of: chain, file, both")
     if pd is None:
         raise RuntimeError("pandas is required (pip install 'cooper-beta[eval]').")
 
@@ -161,6 +170,11 @@ def evaluate(
         row.update({f"file_{key}": value for key, value in file_extra.items()})
         if print_metric_tables:
             print_metrics("=== File-level ===", file_metrics)
+            print(
+                "Dropped ERROR files: "
+                f"true={file_extra['dropped_true_error_files']} "
+                f"false={file_extra['dropped_false_error_files']}\n"
+            )
             print("Breakdown (file-level):")
             print(f"  true:  any_FILTERED_OUT={file_extra['true_any_filtered_out']}")
             print(f"  false: any_FILTERED_OUT={file_extra['false_any_filtered_out']}\n")
