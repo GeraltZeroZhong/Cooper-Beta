@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cooper-beta"
 dynamic = ["version"]
-description = "Beta-barrel-like chain detector for PDB/mmCIF structures."
+description = "Beta-barrel-like chain detector for PDB, mmCIF, and BinaryCIF structures."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -29,6 +29,7 @@ classifiers = [
 dependencies = [
   "numpy>=1.23,<3",
   "biopython>=1.81,<2",
+  "mmcif>=1.1,<2",
   "hydra-core>=1.3,<2",
   "threadpoolctl>=3.2,<4",
   "tqdm>=4,<5",
@@ -122,6 +123,7 @@ untyped_calls_exclude = ["Bio"]
 [[tool.mypy.overrides]]
 module = [
   "Bio.*",
+  "mmcif.*",
   "hydra.*",
   "omegaconf.*",
   "pandas.*",

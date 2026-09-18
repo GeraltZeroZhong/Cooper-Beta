@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Download all structures referenced by an mpstruc beta-barrel XML dump and classify
-entries at the assembly/entity level for D1-style canonical TMBB curation.
+entries at the assembly/entity level for canonical transmembrane beta-barrel curation.
 
 What this script does
 ---------------------
@@ -14,7 +14,7 @@ What this script does
    - observed residue counts
    - beta-strand counts from _struct_sheet_range
    - preferred assembly composition
-5. Produce a preliminary classification useful for D1 curation:
+5. Produce a preliminary classification for positive-candidate curation:
    - SELF_CONTAINED_MONOMER
    - SELF_CONTAINED_HOMOOLIGOMER
    - SELF_CONTAINED_WITH_PARTNER_COMPLEX

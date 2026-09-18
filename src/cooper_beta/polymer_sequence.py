@@ -8,13 +8,9 @@ one-to-one label-to-author chain mapping.
 
 from __future__ import annotations
 
-import gzip
-import os
 import re
-import tempfile
 from collections import defaultdict
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,7 +20,12 @@ from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 from Bio.PDB.MMCIFParser import MMCIFParser
 from Bio.PDB.PDBParser import PDBParser
 
-SUPPORTED_STRUCTURE_EXTENSIONS = frozenset({".pdb", ".ent", ".cif", ".mmcif"})
+from .structure_io import (
+    SUPPORTED_STRUCTURE_EXTENSIONS as SUPPORTED_STRUCTURE_EXTENSIONS,
+)
+from .structure_io import materialized_structure_path as _materialized_structure_path
+from .structure_io import structure_extension as structure_extension
+
 COMPLETE_SEQUENCE_POLICY = "declared_complete_polymer_sequence_strict_author_chain_mapping"
 COMPLETE_SEQUENCE_SOURCES = frozenset(
     {
@@ -63,34 +64,6 @@ class CompletePolymerSequence:
             not self.label_asym_id or not self.entity_id
         ):
             raise ValueError("mmCIF complete sequences require entity and label-chain IDs.")
-
-
-def structure_extension(path: Path) -> str:
-    """Return the true coordinate extension, preserving compound gzip suffixes."""
-
-    name = path.name.lower()
-    if name.endswith(".gz"):
-        name = name[:-3]
-    return Path(name).suffix
-
-
-@contextmanager
-def _materialized_structure_path(path: Path) -> Iterator[Path]:
-    with path.open("rb") as handle:
-        is_gzip = handle.read(2) == b"\x1f\x8b"
-    if not is_gzip:
-        yield path
-        return
-
-    descriptor, temporary_name = tempfile.mkstemp(suffix=structure_extension(path) or ".pdb")
-    temporary_path = Path(temporary_name)
-    try:
-        with gzip.open(path, "rb") as source, os.fdopen(descriptor, "wb") as target:
-            for block in iter(lambda: source.read(1024 * 1024), b""):
-                target.write(block)
-        yield temporary_path
-    finally:
-        temporary_path.unlink(missing_ok=True)
 
 
 def _normalized_chain_id(value: object) -> str:

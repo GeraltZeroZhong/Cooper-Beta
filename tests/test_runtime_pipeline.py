@@ -514,7 +514,9 @@ def test_run_pipeline_manifest_records_worker_resolution_and_respects_hash_setti
     assert document["input_file_state"][0]["sha256"] is None
     assert document["input_identity_policy"] == {
         "algorithm": "sha256",
-        "polymer_position_policy": ("selected-model-mmcif-label-seq-or-pdb-unique-seqres"),
+        "polymer_position_policy": (
+            "selected-model-declared-polymer-position-or-observed-residue-order"
+        ),
         "dssp_residue_coverage_policy": (
             "selected-model-declared-polypeptide-ca-residues-with-finite-n-ca-c-o"
         ),

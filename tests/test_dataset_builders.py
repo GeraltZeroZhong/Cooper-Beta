@@ -118,7 +118,7 @@ def test_dataset_manifest_uses_source_version_when_distribution_is_uninstalled(
     )
 
     software = manifest.data["software"]
-    assert software["package_version"] == "1.0.0"
+    assert software["package_version"] == "1.0.1"
     assert software["installed_distribution_version"] is None
     assert software["package_version_source_path"].endswith("cooper_beta/_version.py")
     assert len(software["package_version_source_sha256"]) == 64

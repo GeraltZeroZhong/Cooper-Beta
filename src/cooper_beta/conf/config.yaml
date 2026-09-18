@@ -22,7 +22,7 @@ runtime:
 
 input:
   path: ""
-  allowed_suffixes: [.pdb, .cif, .mmcif, .pdb.gz, .cif.gz, .mmcif.gz]
+  allowed_suffixes: [.pdb, .ent, .cif, .mmcif, .bcif, .pdb.gz, .ent.gz, .cif.gz, .mmcif.gz, .bcif.gz]
   model_id: 0
   strict_chain: true
   include_nonstandard_amino_acids: true
