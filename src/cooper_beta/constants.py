@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-POLYMER_POSITION_POLICY = "selected-model-mmcif-label-seq-or-pdb-unique-seqres"
+POLYMER_POSITION_POLICY = "selected-model-declared-polymer-position-or-observed-residue-order"
 DSSP_RESIDUE_COVERAGE_POLICY = (
     "selected-model-declared-polypeptide-ca-residues-with-finite-n-ca-c-o"
 )

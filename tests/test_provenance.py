@@ -210,7 +210,9 @@ def test_manifest_uses_frozen_input_identity_and_verified_mode_rejects_changes(
     assert manifest["input_file_state"][0]["sha256"] == frozen.sha256
     assert manifest["input_identity_policy"] == {
         "algorithm": "sha256",
-        "polymer_position_policy": ("selected-model-mmcif-label-seq-or-pdb-unique-seqres"),
+        "polymer_position_policy": (
+            "selected-model-declared-polymer-position-or-observed-residue-order"
+        ),
         "dssp_residue_coverage_policy": (
             "selected-model-declared-polypeptide-ca-residues-with-finite-n-ca-c-o"
         ),

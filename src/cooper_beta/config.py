@@ -75,10 +75,12 @@ class InputConfig:
             ".ent",
             ".cif",
             ".mmcif",
+            ".bcif",
             ".pdb.gz",
             ".ent.gz",
             ".cif.gz",
             ".mmcif.gz",
+            ".bcif.gz",
         ),
     )
     model_id: int = _parameter("Zero-based Biopython model identifier.", ge=0)

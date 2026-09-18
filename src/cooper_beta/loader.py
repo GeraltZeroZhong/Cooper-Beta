@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gzip
 import os
 import re
 import tempfile
@@ -8,6 +7,7 @@ import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -32,9 +32,13 @@ from .dssp_adapter import (
     validate_dssp_secondary_structure_code,
 )
 from .exceptions import ChainNotFoundError, DsspError, InputValidationError, StructureParseError
-from .polymer_sequence import declared_polymer_sequence_for_author_chain
+from .polymer_sequence import (
+    CompleteSequenceUnavailableError,
+    declared_polymer_sequence_for_author_chain,
+)
 from .runtime import require_dssp_binary
 from .strand_graph import StrandAdjacencyGraph, StrandEdge, StrandNode, StrandRange
+from .structure_io import materialized_structure_path
 
 _DSSP_DERIVED_MMCIF_PREFIXES = (
     "_dssp_",
@@ -257,31 +261,6 @@ def _require_public_chain_ids(model: Any, *, source_path: str) -> None:
             "Blank chains cannot be represented without colliding with the file-level "
             "preparation-error identity; the loader will not silently rename them."
         )
-
-
-def _decompress_gzip_to_temp_if_needed(in_path: str) -> str | None:
-    with open(in_path, "rb") as handle:
-        if handle.read(2) != b"\x1f\x8b":
-            return None
-
-    lower_name = os.path.basename(in_path).lower()
-    suffix = next(
-        (
-            coordinate_suffix
-            for coordinate_suffix in (".mmcif", ".cif", ".pdb")
-            if lower_name.endswith(f"{coordinate_suffix}.gz")
-            or lower_name.endswith(coordinate_suffix)
-        ),
-        ".pdb",
-    )
-    fd, out_path = tempfile.mkstemp(suffix=suffix)
-    with gzip.open(in_path, "rb") as source, os.fdopen(fd, "wb") as target:
-        while True:
-            chunk = source.read(1024 * 1024)
-            if not chunk:
-                break
-            target.write(chunk)
-    return out_path
 
 
 def _mmcif_author_residue_key(
@@ -532,14 +511,26 @@ def _atom_site_only_mmcif_polypeptide_mapping(
     model: Any,
     input_config: InputConfig,
 ) -> _MmcifPolymerMapping:
-    """Infer one coordinate-only protein chain from explicit residue chemistry."""
+    """Infer coordinate-only protein polymers independently for each author chain."""
 
-    chains = list(model.get_chains())
-    if len(chains) != 1:
+    positions: dict[DsspResidueKey, int] = {}
+    components: dict[DsspResidueKey, str] = {}
+    for chain in model.get_chains():
+        mapping = _atom_site_only_chain_polymer_mapping(chain, input_config)
+        positions.update(mapping.positions)
+        components.update(mapping.components)
+    if not positions:
         raise StructureParseError(
-            "Atom-site-only mmCIF input must contain exactly one author chain."
+            "Atom-site-only mmCIF contains no ATOM amino-acid residues from which to identify "
+            "a protein polymer."
         )
-    chain = chains[0]
+    return _MmcifPolymerMapping(positions, components, True)
+
+
+def _atom_site_only_chain_polymer_mapping(
+    chain: Any,
+    input_config: InputConfig,
+) -> _MmcifPolymerMapping:
     candidate_groups: dict[tuple[int, str], list[Any]] = {}
     ordered_author_positions: list[tuple[int, str]] = []
     atom_seed_author_positions: set[tuple[int, str]] = set()
@@ -547,11 +538,6 @@ def _atom_site_only_mmcif_polypeptide_mapping(
         residue = _select_residue_variant(raw_residue, input_config)
         hetfield = str(residue.id[0])
         amino_acid = bool(is_aa(residue, standard=False))
-        if hetfield == " " and not amino_acid:
-            raise StructureParseError(
-                "Atom-site-only mmCIF contains an ATOM residue that is not a recognized "
-                f"amino acid: {residue.id!r}."
-            )
         if not amino_acid:
             continue
         author_position = (int(residue.id[1]), str(residue.id[2]))
@@ -576,10 +562,7 @@ def _atom_site_only_mmcif_polypeptide_mapping(
             atom_seed_indices.add(candidate_index)
 
     if not atom_seed_indices:
-        raise StructureParseError(
-            "Atom-site-only mmCIF contains no ATOM amino-acid residues from which to identify "
-            "a protein polymer."
-        )
+        return _MmcifPolymerMapping({}, {}, True)
 
     linked_neighbors: dict[int, set[int]] = {index: set() for index in range(len(candidates))}
     for previous_index, current_index in zip(
@@ -734,18 +717,12 @@ def _canonical_atom_site_only_dssp_input(
     mmcif: dict[str, str | list[str]],
     mapping: _MmcifPolymerMapping,
 ) -> dict[str, str | list[str]]:
-    """Build a standard single-polymer mmCIF from one strict coordinate-only chain."""
+    """Build DSSP polymer categories for coordinate-only author chains."""
 
     if not mapping.atom_site_only:
         raise TypeError("Atom-site-only DSSP materialization requires its matching mapping.")
     if not mapping.positions:
         raise StructureParseError("Atom-site-only mmCIF contains no mapped polymer residues.")
-    expected_positions = set(range(len(mapping.positions)))
-    if set(mapping.positions.values()) != expected_positions:
-        raise StructureParseError(
-            "Atom-site-only mmCIF polymer positions must be unique and contiguous."
-        )
-
     identity_columns = (
         "_atom_site.group_PDB",
         "_atom_site.label_asym_id",
@@ -769,7 +746,8 @@ def _canonical_atom_site_only_dssp_input(
 
     retained_row_indices: list[int] = []
     row_positions: list[int] = []
-    original_label_chains_by_position: dict[int, set[str]] = {}
+    row_author_chains: list[str] = []
+    original_label_chains_by_position: dict[DsspResidueKey, set[str]] = {}
     covered_keys: set[DsspResidueKey] = set()
     for row_index, values in enumerate(zip(*columns, strict=True)):
         (
@@ -804,7 +782,8 @@ def _canonical_atom_site_only_dssp_input(
             )
         retained_row_indices.append(row_index)
         row_positions.append(polymer_position)
-        original_label_chains_by_position.setdefault(polymer_position, set()).add(label_chain)
+        row_author_chains.append(author_chain)
+        original_label_chains_by_position.setdefault(author_key, set()).add(label_chain)
         covered_keys.add(author_key)
 
     missing_keys = set(mapping.positions).difference(covered_keys)
@@ -818,8 +797,14 @@ def _canonical_atom_site_only_dssp_input(
             "One atom-site-only polymer residue maps to multiple label chain IDs."
         )
 
-    first_position = min(expected_positions)
-    canonical_label_chain = next(iter(original_label_chains_by_position[first_position]))
+    keys_by_position = sorted(mapping.positions, key=lambda key: (key[0], mapping.positions[key]))
+    author_chain_ids = list(dict.fromkeys(key[0] for key in keys_by_position))
+    entity_by_chain = {chain: str(index) for index, chain in enumerate(author_chain_ids, start=1)}
+    label_by_chain: dict[str, str] = {}
+    for residue_key in keys_by_position:
+        label_by_chain.setdefault(
+            residue_key[0], next(iter(original_label_chains_by_position[residue_key]))
+        )
     atom_row_count = len(columns[0])
     materialized: dict[str, str | list[str]] = {
         key: raw_values
@@ -844,38 +829,40 @@ def _canonical_atom_site_only_dssp_input(
             )
         materialized[key] = [atom_column_values[index] for index in retained_row_indices]
 
-    retained_count = len(retained_row_indices)
-    materialized["_atom_site.label_asym_id"] = [canonical_label_chain] * retained_count
-    materialized["_atom_site.label_entity_id"] = ["1"] * retained_count
+    materialized["_atom_site.label_asym_id"] = [
+        label_by_chain[chain] for chain in row_author_chains
+    ]
+    materialized["_atom_site.label_entity_id"] = [
+        entity_by_chain[chain] for chain in row_author_chains
+    ]
     materialized["_atom_site.label_seq_id"] = [str(position + 1) for position in row_positions]
 
-    keys_by_position = sorted(mapping.positions, key=mapping.positions.__getitem__)
     components = [mapping.components[key] for key in keys_by_position]
-    author_chain_ids = {key[0] for key in keys_by_position}
-    if len(author_chain_ids) != 1:
-        raise StructureParseError(
-            "Atom-site-only mmCIF polymer mapping spans multiple author chains."
-        )
-    author_chain_id = next(iter(author_chain_ids))
-    sequence_ids = [str(position + 1) for position in range(len(keys_by_position))]
+    sequence_ids = [str(mapping.positions[key] + 1) for key in keys_by_position]
     author_sequence_ids = [str(key[1][1]) for key in keys_by_position]
     insertion_codes = ["?" if key[1][2] == " " else key[1][2] for key in keys_by_position]
-    contains_modified_monomer = any(key[1][0] != " " for key in keys_by_position)
+    chains_with_modified_monomer = {key[0] for key in keys_by_position if key[1][0] != " "}
+    entity_ids = [entity_by_chain[chain] for chain in author_chain_ids]
+    residue_entity_ids = [entity_by_chain[key[0]] for key in keys_by_position]
+    residue_label_ids = [label_by_chain[key[0]] for key in keys_by_position]
+    chain_count = len(author_chain_ids)
 
-    materialized["_entity.id"] = ["1"]
-    materialized["_entity.type"] = ["polymer"]
-    materialized["_entity_poly.entity_id"] = ["1"]
-    materialized["_entity_poly.type"] = ["polypeptide(L)"]
-    materialized["_entity_poly.nstd_linkage"] = ["no"]
-    materialized["_entity_poly.nstd_monomer"] = ["yes" if contains_modified_monomer else "no"]
-    materialized["_entity_poly_seq.entity_id"] = ["1"] * len(keys_by_position)
+    materialized["_entity.id"] = entity_ids
+    materialized["_entity.type"] = ["polymer"] * chain_count
+    materialized["_entity_poly.entity_id"] = entity_ids
+    materialized["_entity_poly.type"] = ["polypeptide(L)"] * chain_count
+    materialized["_entity_poly.nstd_linkage"] = ["no"] * chain_count
+    materialized["_entity_poly.nstd_monomer"] = [
+        "yes" if chain in chains_with_modified_monomer else "no" for chain in author_chain_ids
+    ]
+    materialized["_entity_poly_seq.entity_id"] = residue_entity_ids
     materialized["_entity_poly_seq.num"] = sequence_ids
     materialized["_entity_poly_seq.mon_id"] = components
     materialized["_entity_poly_seq.hetero"] = ["n"] * len(keys_by_position)
-    materialized["_struct_asym.id"] = [canonical_label_chain]
-    materialized["_struct_asym.entity_id"] = ["1"]
-    materialized["_pdbx_poly_seq_scheme.asym_id"] = [canonical_label_chain] * len(keys_by_position)
-    materialized["_pdbx_poly_seq_scheme.entity_id"] = ["1"] * len(keys_by_position)
+    materialized["_struct_asym.id"] = [label_by_chain[chain] for chain in author_chain_ids]
+    materialized["_struct_asym.entity_id"] = entity_ids
+    materialized["_pdbx_poly_seq_scheme.asym_id"] = residue_label_ids
+    materialized["_pdbx_poly_seq_scheme.entity_id"] = residue_entity_ids
     materialized["_pdbx_poly_seq_scheme.seq_id"] = sequence_ids
     materialized["_pdbx_poly_seq_scheme.mon_id"] = components
     materialized["_pdbx_poly_seq_scheme.hetero"] = ["n"] * len(keys_by_position)
@@ -883,7 +870,7 @@ def _canonical_atom_site_only_dssp_input(
     materialized["_pdbx_poly_seq_scheme.auth_seq_num"] = author_sequence_ids
     materialized["_pdbx_poly_seq_scheme.pdb_mon_id"] = components
     materialized["_pdbx_poly_seq_scheme.auth_mon_id"] = components
-    materialized["_pdbx_poly_seq_scheme.pdb_strand_id"] = [author_chain_id] * len(keys_by_position)
+    materialized["_pdbx_poly_seq_scheme.pdb_strand_id"] = [key[0] for key in keys_by_position]
     materialized["_pdbx_poly_seq_scheme.pdb_ins_code"] = insertion_codes
     return materialized
 
@@ -1107,12 +1094,12 @@ class ProteinLoader:
         if not os.path.exists(self.file_path):
             raise InputValidationError(f"Structure file not found: {self.file_path}")
 
-        input_tmp = _decompress_gzip_to_temp_if_needed(self.file_path)
-        parse_path = input_tmp or self.file_path
-        ext = os.path.splitext(parse_path)[1].lower()
-
         try:
-            with warnings.catch_warnings():
+            with (
+                materialized_structure_path(Path(self.file_path)) as parse_path,
+                warnings.catch_warnings(),
+            ):
+                ext = parse_path.suffix.lower()
                 warnings.simplefilter("ignore", BiopythonWarning)
                 if ext in [".cif", ".mmcif"]:
                     mmcif_parser = MMCIFParser(QUIET=True)
@@ -1142,12 +1129,6 @@ class ProteinLoader:
 
         except Exception as e:
             raise StructureParseError(f"Failed to parse structure {self.file_path}: {e}") from None
-        finally:
-            if input_tmp and os.path.exists(input_tmp):
-                try:
-                    os.remove(input_tmp)
-                except OSError:
-                    pass
 
     def _export_protein_only_pdb(self) -> str:
         _fill_missing_atom_elements(self.model)
@@ -1307,15 +1288,16 @@ class ProteinLoader:
                 # The classic DSSP text format has a one-character chain field.
                 # Parse modern annotated mmCIF output instead, preserving the
                 # exact label-to-author residue mapping for every chain.
-                tmp_path = _decompress_gzip_to_temp_if_needed(self.file_path)
-                dssp_input = tmp_path or self.file_path
                 dssp_bin = require_dssp_binary(self.dssp_bin)
                 assert self._mmcif_polymer_mapping is not None
-                with _selected_model_mmcif_path(
-                    dssp_input,
-                    model_id=self.model_id,
-                    polymer_mapping=self._mmcif_polymer_mapping,
-                ) as selected_model_path:
+                with (
+                    materialized_structure_path(Path(self.file_path)) as dssp_input,
+                    _selected_model_mmcif_path(
+                        dssp_input,
+                        model_id=self.model_id,
+                        polymer_mapping=self._mmcif_polymer_mapping,
+                    ) as selected_model_path,
+                ):
                     self._install_dssp_annotation(
                         run_dssp_annotation(
                             selected_model_path,
@@ -1435,7 +1417,7 @@ class ProteinLoader:
         return True
 
     def _pdb_polymer_positions(self, chain: Any) -> dict[tuple[str, int, str], int]:
-        """Return unique SEQRES positions for every observed PDB polymer residue."""
+        """Use SEQRES positions when declared, otherwise observed residue order."""
 
         chain_id = str(chain.id)
         cached = self._pdb_polypeptide_positions_by_chain.get(chain_id)
@@ -1458,12 +1440,15 @@ class ProteinLoader:
                 self.file_path,
                 str(chain.id),
             )
+        except CompleteSequenceUnavailableError:
+            positions = tuple(range(len(selected_residues)))
         except (OSError, TypeError, ValueError) as error:
             raise StructureParseError(
                 f"PDB chain {str(chain.id)!r} requires a complete, uniquely mappable "
                 f"SEQRES declaration: {error}"
             ) from error
-        positions = _unique_subsequence_positions("".join(letters), declaration.sequence)
+        else:
+            positions = _unique_subsequence_positions("".join(letters), declaration.sequence)
         result = {
             residue.id: position
             for residue, position in zip(selected_residues, positions, strict=True)

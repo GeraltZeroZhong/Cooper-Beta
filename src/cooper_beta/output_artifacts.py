@@ -75,7 +75,7 @@ def _output_state(path: Path) -> dict[str, object] | None:
 
 
 def _lock_file(handle: BinaryIO) -> None:
-    if os.name == "nt":  # pragma: no cover - exercised by Windows CI/release installs
+    if os.name == "nt":  # pragma: no cover - Windows-specific file locking
         import msvcrt
 
         handle.seek(0, os.SEEK_END)
@@ -106,7 +106,7 @@ def _lock_file(handle: BinaryIO) -> None:
 
 
 def _unlock_file(handle: BinaryIO) -> None:
-    if os.name == "nt":  # pragma: no cover - exercised by Windows CI/release installs
+    if os.name == "nt":  # pragma: no cover - Windows-specific file locking
         import msvcrt
 
         handle.seek(0)

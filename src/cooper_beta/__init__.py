@@ -1,7 +1,7 @@
 """
 cooper_beta
 
-A small toolkit/pipeline to detect beta-barrel-like protein chains from PDB/mmCIF structures.
+A small toolkit/pipeline to detect beta-barrel-like chains from PDB, mmCIF, or BinaryCIF.
 """
 
 from __future__ import annotations

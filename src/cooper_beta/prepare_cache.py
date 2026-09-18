@@ -33,6 +33,7 @@ _PREPARATION_PYTHON_SOURCE_FILES = (
     "dssp_adapter.py",
     "strand_graph.py",
     "polymer_sequence.py",
+    "structure_io.py",
     "models.py",
     "runtime.py",
     "config.py",
@@ -136,12 +137,16 @@ def _prepare_config_state(cfg: AppConfig) -> dict[str, object]:
             "dssp_failure_policy": str(input_cfg.dssp_failure_policy),
             "dssp_pdb_export_cryst1_record": str(input_cfg.dssp_pdb_export_cryst1_record),
             "dssp_sheet_codes": [str(code) for code in input_cfg.dssp_sheet_codes],
+            "atom_site_only_max_peptide_bond_distance_angstrom": (
+                input_cfg.atom_site_only_max_peptide_bond_distance_angstrom
+            ),
         },
         "producer": {
             "schema_version": PREPARE_PRODUCER_SCHEMA_VERSION,
             "cooper_beta_source_version": source_package_version,
             "cooper_beta_installed_distribution_version": _package_version("cooper-beta"),
             "biopython": _package_version("biopython"),
+            "mmcif": _package_version("mmcif"),
             "source": _preparation_source_state(),
         },
     }

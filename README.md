@@ -2,7 +2,7 @@
 
 _A deterministic strand-adjacency graph classifier for beta-barrel-like protein chains._
 
-Cooper-Beta 1.0.0 reads PDB or mmCIF coordinates, regenerates secondary-structure annotations with DSSP, constructs one strand-adjacency graph per author chain, and reports a direct classification from three explicit rule groups. The package provides a command-line interface, a typed Python API, grouped evaluation utilities, and reproducible experiment scripts.
+Cooper-Beta 1.0.1 reads PDB, mmCIF, or BinaryCIF coordinates, regenerates secondary-structure annotations with DSSP, constructs one strand-adjacency graph per author chain, and reports a direct classification from three explicit rule groups. The package provides a command-line interface, a typed Python API, grouped evaluation utilities, and reproducible experiment scripts.
 
 The `BARREL` class describes closure in the strand-adjacency graph. Functional annotation, membrane localization, and biological assembly interpretation can be added in downstream analyses.
 
@@ -75,7 +75,7 @@ cooper-beta examples \
 | [`M4QT10.cif`](examples/M4QT10.cif) | 8 strands, 8 adjacencies, 8 cycle strands, rank 1 | `BARREL`, chain `A` |
 | [`A0A2R4ALS6.cif`](examples/A0A2R4ALS6.cif) | 9 strands, 9 adjacencies, 8 cycle strands, rank 1 | `BARREL`, chain `A` |
 
-[`examples/manifest.json`](examples/manifest.json) records the source, target chain, scientific label, sequence length, confidence summary, and licence for each structure.
+[`examples/manifest.json`](examples/manifest.json) records the source, target chain, scientific label, sequence length, global pLDDT, and licence for each structure.
 
 ### Analyze one file or a directory
 
@@ -86,7 +86,7 @@ cooper-beta path/to/structures \
   --out results.csv
 ```
 
-Directory discovery is recursive. Supported suffixes are `.pdb`, `.cif`, `.mmcif`, `.pdb.gz`, `.cif.gz`, and `.mmcif.gz`. The CLI writes:
+Directory discovery is recursive. Supported suffixes are `.pdb`, `.ent`, `.cif`, `.mmcif`, and `.bcif`, including their `.gz` variants. BinaryCIF is decoded to temporary mmCIF with its original categories, chains, residue identifiers, and model numbers preserved. The CLI writes:
 
 - `results.csv`: one row per analyzed author chain
 - `results.csv.manifest.json`: resolved settings, inputs, software environment, execution details, and output state
@@ -110,6 +110,8 @@ cooper-beta path/to/structures \
 | `ERROR` | Structure preparation or worker execution failed for the reported file or chain |
 
 The `reason` field gives the passed-rule summary or the failed boundaries. `error_code` identifies failures such as structure parsing or DSSP execution. `result_stage` locates the outcome in `preparation`, `decision`, or `worker` processing.
+
+The detection CLI exits with status `2` if any result row is `ERROR`, including batches with successful results. It writes the complete results CSV and, when enabled, the run manifest before exiting. A completed run containing only `BARREL` and `NON_BARREL` results exits with status `0`.
 
 ### Fixed CSV schema
 
@@ -145,7 +147,7 @@ flowchart LR
     accTitle: Cooper-Beta processing flow
     accDescr: Coordinates are annotated by DSSP, converted into an author-chain strand graph, measured, and classified by three rule groups.
 
-    coordinates[PDB or mmCIF coordinates] --> annotation[Fresh DSSP annotation]
+    coordinates[PDB, mmCIF or BinaryCIF coordinates] --> annotation[Fresh DSSP annotation]
     annotation --> strands[Physical E-strand nodes]
     coordinates --> contacts[Multi-residue C-alpha contacts]
     strands --> strand_graph["Strand-adjacency graph"]
@@ -157,9 +159,9 @@ flowchart LR
 
 ### Structure preparation
 
-The inference unit is one author chain in the configured coordinate model. Cooper-Beta retains author-chain identifiers, residue numbers, insertion codes, alternate locations, and declared polymer positions. mmCIF polymer positions come from `label_seq_id`; PDB positions are assigned by a unique alignment to the complete `SEQRES` declaration.
+The inference unit is one author chain in the configured coordinate model. Cooper-Beta retains author-chain identifiers, residue numbers, insertion codes, alternate locations, and declared polymer positions. Declared mmCIF polymer positions come from `label_seq_id`; when PDB `SEQRES` is available, positions are assigned by a unique alignment to that declaration. PDB files without `SEQRES`, including coordinate exports and predicted structures, use observed residue order. Author residue identifiers remain unchanged, and DSSP determines secondary structure from the coordinates. Observed residues do not constitute a complete sequence declaration for sequence-based benchmark methods.
 
-For coordinate-only mmCIF files, the supported input contract is one author chain with an unambiguous observed polymer. ATOM amino acids seed the polymer sequence. A modified amino acid stored as HETATM joins the polymer when it has a canonical backbone and a peptide connection to an included neighbor. The default maximum C-N distance is 1.8 Å.
+For coordinate-only mmCIF files, each author chain is handled independently. ATOM amino acids seed the observed polymer. A modified amino acid stored as HETATM joins the polymer when it has a canonical backbone and a peptide connection to an included neighbor. The default maximum C-N distance is 1.8 Å. Temporary polymer categories allow DSSP to process single-chain and multichain coordinate exports.
 
 Cooper-Beta regenerates DSSP annotations for the selected model and converts DSSP `E` ranges into strand segments.[^1] Segments covered by the same ladder side are merged into one physical strand, preserving beta bulges within a single node. A residue lacking a complete finite `N/CA/C/O` backbone remains part of the polymer record, receives `dssp_assignment_available=false`, and contributes to `dssp_unassigned_residue_count`.
 
@@ -356,6 +358,14 @@ cooper-beta path/to/structure.cif \
 ```
 
 ## Release notes
+
+### 1.0.1
+
+- Adds BinaryCIF (`.bcif`, `.bcif.gz`) through the RCSB `mmcif` reader, preserving polymer declarations and atom identities
+- Includes `.ent` and `.ent.gz` in default input discovery
+- Supports coordinate-only PDB without `SEQRES` and multichain coordinate-only mmCIF
+- Includes the configured peptide-bond distance in preparation-cache reuse decisions
+- Returns exit status `2` when a detection batch contains any `ERROR` row, preserving the complete results CSV and run manifest
 
 ### 1.0.0
 

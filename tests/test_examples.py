@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import csv
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -94,3 +98,47 @@ def test_curated_positives_match_strand_graph_and_decision_contract() -> None:
             row.cycle_strand_fraction >= config.rules.cycle_strand_count_fraction.minimum_fraction
         )
         assert row.cycle_rank >= config.rules.cycle_rank.minimum
+
+
+@pytest.mark.skipif(
+    not _supported_dssp_is_available(),
+    reason="DSSP 4.5.3 or newer is required for the mixed-batch CLI regression test.",
+)
+def test_cli_mixed_batch_exits_with_error_and_preserves_all_results(tmp_path: Path) -> None:
+    input_dir = tmp_path / "structures"
+    input_dir.mkdir()
+    shutil.copy2(EXAMPLES_DIR / "M4QT10.cif", input_dir)
+    (input_dir / "broken.pdb").write_text("HEADER\nEND\n", encoding="utf-8")
+    output_csv = tmp_path / "results.csv"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "cooper_beta",
+            str(input_dir),
+            "--workers",
+            "1",
+            "--prepare-workers",
+            "1",
+            "--out",
+            str(output_csv),
+            "runtime.prepare_cache_enabled=false",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 2, completed.stderr
+    assert "1 ERROR row(s)" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    with output_csv.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert len(rows) == 2
+    assert {row["filename"]: row["result"] for row in rows} == {
+        "M4QT10.cif": "BARREL",
+        "broken.pdb": "ERROR",
+    }
+    manifest = json.loads(Path(f"{output_csv}.manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "complete"

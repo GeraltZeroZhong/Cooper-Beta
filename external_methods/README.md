@@ -1,29 +1,29 @@
-# External Methods
+# External Baseline Methods
 
-This directory contains adapters for external baseline methods used during
-evaluation. Adapters live outside the `cooper_beta` package so external
-licensing, data, and runtime requirements stay separate from the MIT-licensed
-detector.
+These adapters run external methods and normalize their predictions for
+comparison with Cooper-Beta. Run them from a source checkout; the upstream
+programs and reference databases are installed or supplied separately.
 
-Each method should provide:
+| Method and usage guide | Input | Prediction |
+| --- | --- | --- |
+| [Foldseek](foldseek/README.md) | Protein structures and a reference panel of barrel chains | Global TMalign similarity with score and coverage thresholds |
+| [IsItABarrel](isitabarrel/README.md) | Contact maps generated from protein coordinates | Structure-derived contact-map classification |
+| [PRED-TMBB2 / JUCHMME](pred_tmbb2/README.md) | Complete protein sequences, supplied as FASTA or extracted from structure declarations | Classification from predicted membrane beta-strand segments |
 
-- a short README with the upstream source, license, expected inputs, and output
-  interpretation;
-- a small runner that invokes the external method or parses its output;
-- smoke-test fixtures under `data/external_methods/` when the runner needs
-  project-local test data.
+Each guide lists the upstream source, license, dependencies, commands, decision
+rule, and output files. The normalized method identifiers are
+`foldseek_tmalign_structure_search`, `isitabarrel_structure_map`, and
+`pred_tmbb2_single_juchmme`.
 
-Dataset evaluators use directory-labelled any-chain file metrics by default.
-Chain metrics require paired, frozen positive and negative target-chain
-manifests with exactly one target per file; non-target partner chains remain
-unlabeled. Evaluators create fresh run directories and strict provenance
-manifests and do not support post-hoc manual relabeling.
+## Dataset Evaluation
 
-Current adapters:
+The Foldseek and PRED-TMBB2 dataset evaluators use one observation per structure
+file by default. A file is predicted positive when any of its eligible chains
+is predicted positive. For chain metrics, supply positive and negative
+target-chain manifests with exactly one target per file; partner chains do not
+enter the chain-level metrics.
 
-- `isitabarrel_structure_map`: structure-derived contact-map baseline.
-- `pred_tmbb2_single_juchmme`: sequence-only topology baseline using an
-  external JUCHMME/PRED-TMBB2 checkout.
-- `foldseek_tmalign_structure_search`: structure-search baseline using an
-  external Foldseek binary in global TMalign mode against a curated reference
-  barrel-chain database.
+Foldseek dataset evaluation also requires an explicit reference panel and
+homology-group assignments. Its guide explains how same-group, same-PDB, and
+identical-chain references are excluded before selecting a hit. Evaluators save
+predictions, metrics, and run metadata in a new output directory for each run.

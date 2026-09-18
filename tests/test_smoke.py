@@ -290,6 +290,33 @@ def test_cli_check_env_rejects_invalid_configured_dssp(
     assert "Traceback" not in stderr
 
 
+@pytest.mark.parametrize("result", ["NON_BARREL", "ERROR"])
+def test_cli_exit_status_distinguishes_negative_results_from_worker_errors(
+    result: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    cli = importlib.import_module("cooper_beta.cli")
+    pipeline = importlib.import_module("cooper_beta.pipeline")
+    models = importlib.import_module("cooper_beta.models")
+    row = _detector_row("toy.pdb", "/tmp/toy.pdb", "A", result)
+    if result == "ERROR":
+        row.update(result_stage="worker", error_code="WORKER_EXCEPTION", reason="analysis failed")
+    run = models.PipelineRunResult.from_rows([row])
+    monkeypatch.setattr(pipeline, "run_pipeline_result", lambda *args, **kwargs: run)
+
+    if result == "ERROR":
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main(["toy.pdb"])
+        assert exc_info.value.code == 2
+        stderr = capsys.readouterr().err
+        assert "1 ERROR row(s)" in stderr
+        assert "Traceback" not in stderr
+    else:
+        assert cli.main(["toy.pdb"]) is None
+        assert capsys.readouterr().err == ""
+
+
 def test_evaluate_rejects_invalid_metric_level_before_detector_runs(tmp_path: Path):
     runner = importlib.import_module("cooper_beta.evaluation.runner")
 

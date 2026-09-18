@@ -526,15 +526,26 @@ def test_atom_site_only_mmcif_materializes_one_exact_polymer_for_dssp(tmp_path: 
     assert "_refine_ls_shell.d_res_high" not in selected
 
 
-def test_atom_site_only_mmcif_rejects_multiple_author_chains(tmp_path: Path):
+def test_atom_site_only_mmcif_maps_multiple_author_chains_independently(tmp_path: Path):
     mmcif_path = tmp_path / "multiple-author-chains.cif"
     mmcif_path.write_text(
         _atom_site_only_mmcif(gly_author_chain="Y"),
         encoding="utf-8",
     )
 
-    with pytest.raises(StructureParseError, match="exactly one author chain"):
-        _loader(mmcif_path, dssp_failure_policy="degraded")
+    loader = _loader(mmcif_path)
+    assert loader._mmcif_polypeptide_positions == {
+        ("X", (" ", 1, " ")): 0,
+        ("X", ("H_MSE", 2, " ")): 1,
+        ("Y", (" ", 3, " ")): 0,
+    }
+    with _selected_model_mmcif_path(
+        mmcif_path, model_id=0, polymer_mapping=loader._mmcif_polymer_mapping
+    ) as selected_path:
+        selected = MMCIF2Dict(selected_path)
+    assert selected["_entity_poly.entity_id"] == ["1", "2"]
+    assert selected["_pdbx_poly_seq_scheme.pdb_strand_id"] == ["X", "X", "Y"]
+    assert selected["_pdbx_poly_seq_scheme.seq_id"] == ["1", "2", "1"]
 
 
 def test_atom_site_only_mmcif_rejects_partial_polymer_metadata(tmp_path: Path):

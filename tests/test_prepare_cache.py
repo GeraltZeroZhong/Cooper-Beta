@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
 import cooper_beta.preparation as preparation
@@ -128,6 +129,22 @@ def test_prepare_cache_invalidates_when_file_changes(tmp_path: Path, monkeypatch
 
     assert isinstance(first, list)
     assert isinstance(second, list)
+    assert FakeLoader.calls == 2
+
+
+def test_prepare_cache_recomputes_after_peptide_distance_change(tmp_path: Path, monkeypatch):
+    input_file = tmp_path / "toy.cif"
+    input_file.write_text("data_toy\n")
+    cfg = build_config({"runtime.prepare_cache_dir": str(tmp_path / "cache")})
+    changed = replace(
+        cfg,
+        input=replace(cfg.input, atom_site_only_max_peptide_bond_distance_angstrom=1.0),
+    )
+    monkeypatch.setattr(preparation, "ProteinLoader", FakeLoader)
+    FakeLoader.calls = 0
+    assert isinstance(prepare_one_file(str(input_file), cfg), list)
+    assert isinstance(prepare_one_file(str(input_file), changed), list)
+    assert isinstance(prepare_one_file(str(input_file), changed), list)
     assert FakeLoader.calls == 2
 
 

@@ -12,12 +12,14 @@ if __package__ in {None, ""}:  # pragma: no cover - path execution convenience
     from cooper_beta._version import __version__
     from cooper_beta.bootstrap import configure_thread_environment
     from cooper_beta.config import build_config
+    from cooper_beta.constants import RESULT_ERROR
     from cooper_beta.exceptions import CooperBetaError
     from cooper_beta.runtime import runtime_summary
 else:
     from ._version import __version__
     from .bootstrap import configure_thread_environment
     from .config import build_config
+    from .constants import RESULT_ERROR
     from .exceptions import CooperBetaError
     from .runtime import runtime_summary
 
@@ -72,7 +74,7 @@ def main(argv: list[str] | None = None) -> None:
         prog="cooper-beta",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Detect beta-barrel-like protein chains in PDB or mmCIF structures. A directory "
+            "Detect beta-barrel-like protein chains in PDB, mmCIF, or BinaryCIF structures. A directory "
             "input is searched recursively. Options that use KEY=VALUE syntax override the "
             "default configuration. A coordinate-supported strand adjacency "
             "requires at least two C-alpha pairs within 6.8 Angstrom, with two distinct "
@@ -80,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
             "strand_adjacency_count >= 8; cycle_strand_count >= 4 and "
             "cycle_strand_fraction >= 0.05; cycle_rank >= 1. The cycle-strand fields describe "
             "the largest closed component. Coordinate-only mmCIF "
-            "inputs require one author chain; linked modified amino acids use a maximum C-N "
+            "inputs are handled per author chain; linked modified amino acids use a maximum C-N "
             "distance of 1.8 Angstrom "
             "(input.atom_site_only_max_peptide_bond_distance_angstrom=1.8)."
         ),
@@ -88,7 +90,8 @@ def main(argv: list[str] | None = None) -> None:
             "Output: a chain-level results CSV and, by default, <CSV>.manifest.json with the "
             "resolved configuration and run provenance. Existing output files cause an error "
             "unless output.existing_artifact_policy=replace is supplied. Invalid configuration, "
-            "unreadable input, DSSP failure, or analysis failure exits with status 2. Example: "
+            "unreadable input, DSSP failure, or analysis failure exits with status 2. A batch "
+            "with any ERROR row also exits with status 2 after writing all results. Example: "
             "cooper-beta structures/ --out results.csv "
             "rules.cycle_strand_count_fraction.minimum_fraction=0.05"
         ),
@@ -99,7 +102,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         metavar="STRUCTURE_OR_DIRECTORY",
         help=(
-            "Input .pdb, .cif, .mmcif, or gzip-compressed structure file, or a directory "
+            "Input .pdb, .ent, .cif, .mmcif, .bcif, or gzip-compressed structure file, or a directory "
             "searched recursively. Required unless input.path=PATH is supplied."
         ),
     )
@@ -181,7 +184,14 @@ def main(argv: list[str] | None = None) -> None:
             prepare_workers=args.prepare_workers,
             out_csv=args.out,
         )
-        run_pipeline_result(cfg, write_csv=True, print_summary=True, strict_input=True)
+        run = run_pipeline_result(cfg, write_csv=True, print_summary=True, strict_input=True)
+        error_count = run.result_counts.get(RESULT_ERROR, 0)
+        if error_count:
+            print(
+                f"Error: {error_count} ERROR row(s); see the results CSV for details.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
     except (
         CooperBetaError,
         FileNotFoundError,

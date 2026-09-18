@@ -672,6 +672,7 @@ def build_run_manifest(
         "packages": {
             "cooper-beta": installed_project_version,
             "biopython": _package_version("biopython"),
+            "mmcif": _package_version("mmcif"),
             "numpy": _package_version("numpy"),
             "hydra-core": _package_version("hydra-core"),
             "omegaconf": _package_version("omegaconf"),

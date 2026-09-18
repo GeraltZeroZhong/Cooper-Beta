@@ -88,5 +88,5 @@ def test_detector_help_explains_contact_and_three_rule_defaults() -> None:
     assert "cycle_strand_count >= 4" in compact_help
     assert "cycle_strand_fraction >= 0.05" in compact_help
     assert "cycle_rank >= 1" in compact_help
-    assert "Coordinate-only mmCIF inputs require one author chain" in compact_help
+    assert "Coordinate-only mmCIF inputs are handled per author chain" in compact_help
     assert "input.atom_site_only_max_peptide_bond_distance_angstrom=1.8" in compact_help

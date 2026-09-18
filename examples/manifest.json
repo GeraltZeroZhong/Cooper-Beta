@@ -18,8 +18,7 @@
       "sequence_length": 137,
       "scientific_label": "positive",
       "expected_result": "BARREL",
-      "global_plddt": 88.21,
-      "pae_summary": "One rigid domain was detected across residues 33-137."
+      "global_plddt": 88.21
     },
     {
       "uniprot_accession": "A0A2R4ALS6",
@@ -32,8 +31,7 @@
       "sequence_length": 135,
       "scientific_label": "positive",
       "expected_result": "BARREL",
-      "global_plddt": 73.03,
-      "pae_summary": "No rigid domain longer than 50 residues was detected by the PAE heuristic; the curated positive label remains authoritative for this repository."
+      "global_plddt": 73.03
     }
   ]
 }
