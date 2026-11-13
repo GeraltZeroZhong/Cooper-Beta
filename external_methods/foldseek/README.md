@@ -1,60 +1,56 @@
-# Foldseek Global-TMalign Structure-Search Baseline
+# Foldseek global TM-align baseline
 
-This adapter treats [Foldseek](https://github.com/steineggerlab/foldseek) as
-an external Cooper-Beta evaluation baseline. Cooper-Beta labels this variant
-`foldseek_tmalign_structure_search` because it searches query chains against a
-reference set of known beta-barrel chains using Foldseek's global TMalign mode.
+This adapter searches query chains against known beta-barrel chains with
+[Foldseek](https://github.com/steineggerlab/foldseek). It uses global TM-align
+and reports the method as `foldseek_tmalign_structure_search`.
 
-Foldseek is GPL-3.0, while Cooper-Beta is MIT-licensed, so the upstream binary
-and any Foldseek databases are not vendored here. This directory only contains
-chain-file generation, invocation, and result normalization.
+Foldseek is distributed under GPL-3.0. Install the binary and supply its
+reference databases separately. The Cooper-Beta adapter is MIT-licensed and
+handles chain export, program execution, and result normalization.
 
-## Upstream Sources
+## Upstream sources
 
 - Foldseek repository: <https://github.com/steineggerlab/foldseek>
-- Foldseek paper: van Kempen M. et al. Nature Biotechnology. 2024.
+- Foldseek paper: van Kempen M. et al. [Fast and accurate protein structure search with Foldseek](https://doi.org/10.1038/s41587-023-01773-0). Nature Biotechnology. 2024.
 
-## Decision Rule
+## Decision rule
 
-The main baseline uses `--alignment-type 1`, Foldseek's global TMalign mode.
-This is intentionally different from Foldseek's default local 3Di+AA alignment:
-the Cooper-Beta task asks whether a whole chain has a beta-barrel-like fold, not
-whether it contains a locally similar motif.
+The adapter uses `--alignment-type 1`, Foldseek's global `TMalign` mode, to
+compare whole-chain folds. Foldseek's default mode uses local 3Di+AA alignment.
 
 The normalized decision defaults are:
 
-- `score`: `min(qtmscore, ttmscore)` for the best eligible hit
+- `score`: `min(qtmscore, ttmscore)` for the best hit that meets both coverage
+  thresholds; if none meets them, the best remaining hit's score is retained
+  and the result is `NON_BARREL`. A query with no hits receives score zero.
 - `result`: `BARREL` when `score >= 0.50`, query coverage is at least `0.60`,
   and target coverage is at least `0.60`; otherwise `NON_BARREL`
 - `decision_rule`: recorded in each row so thresholds can be recalibrated
 
-The normalized CSV keeps the best target id, coverage, `qtmscore`, `ttmscore`,
+The normalized CSV keeps the best target ID, coverage, `qtmscore`, `ttmscore`,
 `alntmscore`, Foldseek score fields, and hit counts.
 
-## Reference Database
+## Reference database
 
 For repeated evaluation, build a custom reference database once from curated
-canonical beta-barrel chain structures:
+beta-barrel chain structures:
 
 ```bash
 foldseek createdb path/to/reference_barrel_chains ref_barrel_db
 foldseek createindex ref_barrel_db tmp_index
 ```
 
-The reference set and a family-group manifest are mandatory for dataset
-evaluation. The manifest must assign every query and reference chain to a
-homology group derived independently of the evaluation labels. All reference
-targets from the query's group and PDB id are excluded. In addition, the
-evaluator hashes the exact bytes of every generated single-chain PDB artifact
-and excludes every reference whose normalized-chain SHA-256 equals the query's,
-even if the source was renamed or assigned an incorrect group. Hash coverage is
-validated exactly and fails closed when an artifact cannot be compared
-reliably. PDB-only exclusion is not sufficient because homologous structures
-can occur under different PDB identifiers.
+Dataset evaluation requires a reference set and a homology-group manifest.
+Assign every query and reference chain to a group derived independently of
+the evaluation labels. Before selecting a hit, the evaluator excludes
+references that share the query's group or PDB ID, and references with identical
+exported single-chain PDB content. SHA-256 comparisons identify identical
+exports across source names and group assignments. Homology groups cover
+related structures deposited under different PDB IDs.
 
-## Structure-to-Search Workflow
+## Search from structures
 
-When starting from PDB/CIF/mmCIF query structures, generate one single-chain PDB
+When starting from PDB or mmCIF query structures, generate one single-chain PDB
 record per analyzable chain and run the baseline:
 
 ```bash
@@ -84,19 +80,15 @@ The generator writes:
 - `query_chains/residue_mapping.csv`: chain-file residue index to source residue
 - `foldseek_work/foldseek_hits.tsv`: raw Foldseek TSV before normalization
 
-For smoke tests, this repository uses a tiny fake Foldseek runner under
-`data/external_methods/foldseek_smoke/` so the adapter can be tested without
-installing or vendoring GPL code.
+## Dataset evaluation
 
-## Cooper-Beta Dataset Evaluation
-
-The dataset evaluator defaults to directory-labelled file metrics: each input
-structure is one observation and is predicted positive when any of its chains
-is predicted as a barrel. Chain metrics are available only with paired,
-pre-specified target-chain manifests for both positive and negative splits.
+The dataset evaluator takes file labels from the positive and negative input
+directories. Each file is one observation and is predicted positive when any
+eligible chain receives `BARREL`. For chain metrics, provide target-chain
+manifests for both positive and negative splits before evaluation.
 Each target manifest must have exactly the columns `relative_path,author_chain_id` and
-exactly one row for every structure file. Other chains in the same structure
-remain unlabeled and never enter chain-level denominators.
+exactly one row for every structure file. Chain metrics use only these selected
+chains; partner chains remain unlabeled.
 
 ```bash
 python external_methods/foldseek/evaluate_dataset.py \
@@ -112,30 +104,26 @@ python external_methods/foldseek/evaluate_dataset.py \
   --tag run-1.0.0
 ```
 
-There is no implicit reference set. The group manifest has the strict columns
-`split,relative_path,author_chain_id,group_id`, must cover every generated chain in the
-`positive`, `negative`, and `reference` inputs, and must be frozen alongside
-the benchmark. `author_chain_id` is the exact non-blank author-chain identifier. Rows
-with blank author-chain identifiers are rejected because the evaluator requires the
-exact identifier. The
-evaluator excludes every same-family and same-PDB reference
-target, plus every exact normalized-chain content match, before choosing the
-best hit. The manifest records the hash policy, query and reference inventory
-hashes, per-query exclusion categories, and total candidate/observed exclusion
-counts; all normalized-chain hashes are revalidated before completion. Every
-invocation creates a fresh UTC timestamped run directory under `--out-dir`;
-existing runs are never reused or overwritten. It writes:
+Supply the reference set with `--reference-dir`. The group manifest must have
+exactly the columns `split,relative_path,author_chain_id,group_id` and cover
+every generated chain in the `positive`, `negative`, and `reference` inputs.
+Keep the group assignments with the benchmark. `author_chain_id` must contain
+the exact, non-blank chain identifier assigned by the depositor.
+
+Each run creates a new UTC timestamped directory under `--out-dir`, preserving
+earlier runs. It writes:
 
 - `chain_predictions.csv`: all predictions; `is_target_author_chain` identifies
   the manifest-selected author chain, and only those rows have labels
-- `file_results.csv`: directory-labelled any-chain file observations
+- `file_results.csv`: file-level labels and predictions
 - `target_chain_results.csv`: present only for `chain`/`both` metrics
-- `summary.csv` and `summary.md`: the single predeclared metric scope
-- `evaluation_manifest.json`: running/failed/complete provenance, including
-  normalized parameters, input and executable hashes, sampling semantics, and
-  hashes for every run artifact
+- `summary.csv` and `summary.md`: metrics at the selected file and/or chain level
+- `evaluation_manifest.json`: run status, settings, sampling rules, reference
+  exclusion categories and counts, and hashes of inputs, the executable,
+  exported chains, and output files
 
-Manual post-hoc relabeling is intentionally unsupported. Freeze corrected
-scientific labels in the input split and target manifests before evaluation.
-Missing predictions, invalid results, non-finite scores, unmatched manifest
-targets, and structures that produce no eligible chain all fail closed.
+Set scientific labels in the input splits and target manifests before running;
+label corrections require a new evaluation. The evaluator stops if predictions
+are missing, results are invalid, scores are non-finite, target chains are
+unmatched, a structure has no eligible chain, or exported-chain content records
+are incomplete or inconsistent.

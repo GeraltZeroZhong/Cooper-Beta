@@ -1,8 +1,4 @@
-"""
-cooper_beta
-
-A small toolkit/pipeline to detect beta-barrel-like chains from PDB, mmCIF, or BinaryCIF.
-"""
+"""Detect beta-barrel-like protein chains from PDB, mmCIF, or BinaryCIF structures."""
 
 from __future__ import annotations
 

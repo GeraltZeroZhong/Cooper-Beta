@@ -54,7 +54,7 @@ class DsspError(CooperBetaError, RuntimeError):
 
 
 class StructureParseError(CooperBetaError, ValueError):
-    """Raised when a PDB/mmCIF structure cannot be parsed."""
+    """Raised when parsing a PDB, mmCIF, or BinaryCIF structure fails."""
 
     error_code = "STRUCTURE_PARSE_FAILED"
 

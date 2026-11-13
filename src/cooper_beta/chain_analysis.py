@@ -141,7 +141,7 @@ def unhandled_analysis_failure_row(
     config: AppConfig,
     exception: Exception,
 ) -> dict[str, object]:
-    """Represent an unexpected worker failure without inventing graph evidence."""
+    """Return a worker ERROR row with graph measurements for the affected chain."""
 
     normalized = _analysis_payload(PreparedChainPayload.from_mapping(payload))
     measurements = measure_strand_graph(

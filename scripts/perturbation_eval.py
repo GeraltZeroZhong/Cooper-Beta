@@ -1594,11 +1594,11 @@ def main(argv: list[str] | None = None) -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
             "Measure Cooper-Beta sensitivity to coordinate noise. "
-            "Each evaluated structure and its paired truth selection are saved in the suite output."
+            "Each evaluated structure and its target-chain selection are saved in the suite output."
         ),
         epilog=(
             "Output: a suite manifest, archived perturbation structures, per-run detector "
-            "artifacts, and perturbation_summary.csv. Sigma values use Angstroms. "
+            "artifacts, and perturbation_summary.csv. Sigma values use angstroms. "
             "Invalid inputs, policy violations, or failed detector runs exit with status 2."
         ),
     )
@@ -1651,7 +1651,7 @@ def main(argv: list[str] | None = None) -> None:
         default=DEFAULT_POSITIVE_MANIFEST,
         metavar="CSV",
         help=(
-            "Canonical positive target-chain CSV with exactly filename, source_path, "
+            "Positive target-chain CSV with exactly filename, source_path, "
             "structure_sha256, target_author_chain_id. Required together with the "
             "negative manifest for chain/both metrics."
         ),
@@ -1661,7 +1661,7 @@ def main(argv: list[str] | None = None) -> None:
         default=DEFAULT_NEGATIVE_MANIFEST,
         metavar="CSV",
         help=(
-            "Canonical negative target-chain CSV with exactly filename, source_path, "
+            "Negative target-chain CSV with exactly filename, source_path, "
             "structure_sha256, target_author_chain_id. Required together with the "
             "positive manifest for chain/both metrics."
         ),
@@ -1676,7 +1676,7 @@ def main(argv: list[str] | None = None) -> None:
         "--noise-sigmas",
         default=DEFAULT_NOISE_SIGMAS,
         metavar="A1,A2,...",
-        help="Comma-separated coordinate-noise standard deviations in Angstroms.",
+        help="Comma-separated coordinate-noise standard deviations in angstroms.",
     )
     parser.add_argument(
         "--noise-seeds",
@@ -1688,7 +1688,7 @@ def main(argv: list[str] | None = None) -> None:
         "--noise-atoms",
         choices=["ca", "all"],
         default=DEFAULT_NOISE_ATOMS,
-        help="Perturb only alpha carbons (ca) or every coordinate atom (all).",
+        help="Perturb C-alpha atoms (ca) or every coordinate atom (all).",
     )
     parser.add_argument(
         "--max-files-per-split",

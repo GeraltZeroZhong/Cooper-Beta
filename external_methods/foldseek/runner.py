@@ -657,7 +657,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="python external_methods/foldseek/runner.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Run the Foldseek global-TMalign baseline and normalize one BARREL or NON_BARREL "
+            "Run the Foldseek global TM-align baseline and normalize one BARREL or NON_BARREL "
             "decision per query. A query is positive when an eligible hit reaches the selected "
             "score threshold and both coverage thresholds."
         ),
@@ -716,7 +716,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_ALIGNMENT_TYPE,
         metavar="N",
-        help="Foldseek --alignment-type value; 1 selects global TMalign.",
+        help="Foldseek --alignment-type value; 1 selects global TM-align.",
     )
     parser.add_argument(
         "--score-mode",

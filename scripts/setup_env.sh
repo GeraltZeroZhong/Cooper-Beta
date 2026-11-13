@@ -12,11 +12,9 @@ usage() {
 Usage:
   bash scripts/setup_env.sh [--name ENV_NAME] [--dev] [--dry-run]
 
-Create a reproducible Cooper-Beta environment with DSSP 4.5.3 from
-conda-lock.yml, then install the exact Python dependency graph from uv.lock.
-There is deliberately no apt/pip fallback: a fallback would create a
-scientifically different DSSP, Python, or BLAS environment while appearing to
-use the same configuration.
+Create a Cooper-Beta environment with DSSP 4.5.3 from conda-lock.yml,
+then install the Python dependencies specified in uv.lock. Both lock files
+are required to reproduce the recorded DSSP, Python, and BLAS versions.
 
 Prerequisites:
   - conda, mamba, or micromamba

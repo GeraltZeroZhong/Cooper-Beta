@@ -1,17 +1,41 @@
 # Cooper-Beta
 
-_A deterministic strand-adjacency graph classifier for beta-barrel-like protein chains._
+_Screen protein structures for beta-barrel-like folds with interpretable strand-graph rules._
 
-Cooper-Beta 1.0.1 reads PDB, mmCIF, or BinaryCIF coordinates, regenerates secondary-structure annotations with DSSP, constructs one strand-adjacency graph per author chain, and reports a direct classification from three explicit rule groups. The package provides a command-line interface, a typed Python API, grouped evaluation utilities, and reproducible experiment scripts.
+Cooper-Beta reads PDB, mmCIF, or BinaryCIF structures and classifies each protein chain as `BARREL` or `NON_BARREL`. It uses DSSP to identify beta-strands, connects them in a strand-adjacency graph, and applies three rule groups. You can analyze a single structure or screen a directory from the command line or Python.
 
-The `BARREL` class describes closure in the strand-adjacency graph. Functional annotation, membrane localization, and biological assembly interpretation can be added in downstream analyses.
+The name combines *cooper*, a barrel maker, with *beta*, referring to the beta-sheets that form protein beta-barrels.
 
----
+**Paper:** [Geometric Intuition Enables Resource-Efficient Screening for β-Barrel-Like Folds in Viral Structural Dark Matter](https://doi.org/10.1002/prot.70192), published in *Proteins: Structure, Function, and Bioinformatics* (2026). See [Citation](#citation) for the recommended reference and BibTeX.
+
+## Quick start
+
+In a Python 3.10+ environment, install DSSP and Cooper-Beta, then check the installation:
+
+```bash
+conda install -c conda-forge 'dssp>=4.5.3'
+pip install cooper-beta
+cooper-beta --check-env
+```
+
+Analyze a structure, replacing `path/to/structure.cif` with your input file:
+
+```bash
+cooper-beta path/to/structure.cif \
+  --workers 1 \
+  --prepare-workers 1 \
+  --out results.csv
+```
+
+`results.csv` contains one row per author chain, identified by the depositor's chain identifier (`auth_asym_id` in mmCIF), with the classification, graph measurements, and decision reason. `results.csv.manifest.json` records the settings and software environment. A failed input is reported as `ERROR`; see [Reading the output](#reading-the-output) for details.
+
+You can also pass a directory to screen multiple structures. To try the bundled structures, see [Run the included examples](#run-the-included-examples).
 
 ## Contents
 
-- [Installation](#installation)
 - [Quick start](#quick-start)
+- [Installation](#installation)
+- [Usage](#usage)
 - [Reading the output](#reading-the-output)
 - [Algorithm](#algorithm)
 - [Configuration](#configuration)
@@ -20,6 +44,7 @@ The `BARREL` class describes closure in the strand-adjacency graph. Functional a
 - [Reproducibility](#reproducibility)
 - [Troubleshooting](#troubleshooting)
 - [Release notes](#release-notes)
+- [Citation](#citation)
 - [License](#license)
 
 ## Installation
@@ -31,15 +56,9 @@ The `BARREL` class describes closure in the strand-adjacency graph. Functional a
 | Python | 3.10 or newer | Cooper-Beta runtime |
 | DSSP | `mkdssp` 4.5.3 or newer | Fresh secondary-structure and ladder annotation |
 
-Install DSSP and Cooper-Beta:
+`cooper-beta --check-env` prints the Python executable, DSSP executable, and DSSP version.
 
-```bash
-conda install -c conda-forge 'dssp>=4.5.3'
-pip install cooper-beta
-cooper-beta --check-env
-```
-
-A successful environment check prints the resolved Python executable, DSSP executable, and DSSP version.
+### Optional dependencies and development
 
 Optional dependency groups provide additional workflows:
 
@@ -57,13 +76,15 @@ uv tool install 'conda-lock==3.0.4'
 bash scripts/setup_env.sh --name cooperbeta --dev
 ```
 
-## Quick start
+## Usage
 
 ### Run the included examples
 
-The repository contains two real predicted structures curated as positive examples. Author chain `A` in both files is classified as `BARREL` by the default rules.
+The repository includes two predicted structures as positive examples. The default rules classify author chain `A` in both files as `BARREL`. Clone the repository and run from its root to use the `examples/` directory:
 
 ```bash
+git clone https://github.com/GeraltZeroZhong/Cooper-Beta.git
+cd Cooper-Beta
 cooper-beta examples \
   --workers 1 \
   --prepare-workers 1 \
@@ -72,8 +93,8 @@ cooper-beta examples \
 
 | Example | Expected graph measurements | Expected class |
 | --- | --- | --- |
-| [`M4QT10.cif`](examples/M4QT10.cif) | 8 strands, 8 adjacencies, 8 cycle strands, rank 1 | `BARREL`, chain `A` |
-| [`A0A2R4ALS6.cif`](examples/A0A2R4ALS6.cif) | 9 strands, 9 adjacencies, 8 cycle strands, rank 1 | `BARREL`, chain `A` |
+| [`M4QT10.cif`](examples/M4QT10.cif) | 8 strands, 8 adjacencies, 8 cycle-supported strands, cycle rank 1 | `BARREL`, chain `A` |
+| [`A0A2R4ALS6.cif`](examples/A0A2R4ALS6.cif) | 9 strands, 9 adjacencies, 8 cycle-supported strands, cycle rank 1 | `BARREL`, chain `A` |
 
 [`examples/manifest.json`](examples/manifest.json) records the source, target chain, scientific label, sequence length, global pLDDT, and licence for each structure.
 
@@ -101,6 +122,8 @@ cooper-beta path/to/structures \
 
 ## Reading the output
 
+The `BARREL` class describes closure in the strand-adjacency graph.
+
 ### Result classes
 
 | `result` | Interpretation |
@@ -109,7 +132,7 @@ cooper-beta path/to/structures \
 | `NON_BARREL` | At least one rule condition failed |
 | `ERROR` | Structure preparation or worker execution failed for the reported file or chain |
 
-The `reason` field gives the passed-rule summary or the failed boundaries. `error_code` identifies failures such as structure parsing or DSSP execution. `result_stage` locates the outcome in `preparation`, `decision`, or `worker` processing.
+The `reason` field summarizes passed rules or identifies unmet thresholds. `error_code` identifies failures such as structure parsing or DSSP execution. `result_stage` identifies the processing stage: `preparation`, `decision`, or `worker`.
 
 The detection CLI exits with status `2` if any result row is `ERROR`, including batches with successful results. It writes the complete results CSV and, when enabled, the run manifest before exiting. A completed run containing only `BARREL` and `NON_BARREL` results exits with status `0`.
 
@@ -128,15 +151,15 @@ cycle_strand_count,cycle_strand_fraction,cycle_rank,reason,error_code,degraded
 | `filename` | Input filename |
 | `source_path` | Resolved input path used by the run |
 | `author_chain_id` | Author-chain identifier from the selected model |
-| `dssp_unassigned_residue_count` | Included polymer residues with a C-alpha coordinate and an incomplete finite `N/CA/C/O` backbone |
+| `dssp_unassigned_residue_count` | Included polymer residues with valid C-alpha coordinates and missing or non-finite N, C, or O coordinates |
 | `strand_count` | Number of physical DSSP `E` strands after beta-bulge merging |
 | `strand_adjacency_count` | Number of undirected ladder- or contact-supported graph edges |
-| `cycle_strand_count` | Strand count in the largest cycle-supported component |
+| `cycle_strand_count` | Strand count in the largest connected component formed by edges that participate in cycles |
 | `cycle_strand_fraction` | `cycle_strand_count / strand_count`, or `0` for an empty graph |
 | `cycle_rank` | Number of independent graph cycles |
 | `degraded` | Indicates an error row produced under degraded preparation policy |
 
-All counts are non-negative integers. `cycle_strand_fraction` is constrained to `[0, 1]` and is serialized consistently with its two counts.
+All counts are non-negative integers. `cycle_strand_fraction` ranges from `0` to `1`.
 
 ## Algorithm
 
@@ -159,11 +182,11 @@ flowchart LR
 
 ### Structure preparation
 
-The inference unit is one author chain in the configured coordinate model. Cooper-Beta retains author-chain identifiers, residue numbers, insertion codes, alternate locations, and declared polymer positions. Declared mmCIF polymer positions come from `label_seq_id`; when PDB `SEQRES` is available, positions are assigned by a unique alignment to that declaration. PDB files without `SEQRES`, including coordinate exports and predicted structures, use observed residue order. Author residue identifiers remain unchanged, and DSSP determines secondary structure from the coordinates. Observed residues do not constitute a complete sequence declaration for sequence-based benchmark methods.
+The unit of classification is one author chain in the selected coordinate model. Cooper-Beta retains author-chain identifiers, residue numbers, insertion codes, alternate locations, and declared polymer positions. In mmCIF, `label_seq_id` maps atom records to positions in the declared polymer sequence. When PDB `SEQRES` is available, positions are assigned by a unique alignment to that sequence. Coordinate-only PDB files use observed residue order. Sequence-based comparison methods use the complete declared sequence, which can include residues absent from the coordinates.
 
-For coordinate-only mmCIF files, each author chain is handled independently. ATOM amino acids seed the observed polymer. A modified amino acid stored as HETATM joins the polymer when it has a canonical backbone and a peptide connection to an included neighbor. The default maximum C-N distance is 1.8 Å. Temporary polymer categories allow DSSP to process single-chain and multichain coordinate exports.
+For coordinate-only mmCIF files, Cooper-Beta processes each author chain independently. Amino acids in `ATOM` records form the initial polymer. A modified amino acid in a `HETATM` record joins the polymer when it has N, CA, C, and O backbone atoms and a peptide bond to an included neighbor. The default maximum C-N distance is 1.8 Å. Temporary polymer categories allow DSSP to process single-chain and multichain coordinate exports.
 
-Cooper-Beta regenerates DSSP annotations for the selected model and converts DSSP `E` ranges into strand segments.[^1] Segments covered by the same ladder side are merged into one physical strand, preserving beta bulges within a single node. A residue lacking a complete finite `N/CA/C/O` backbone remains part of the polymer record, receives `dssp_assignment_available=false`, and contributes to `dssp_unassigned_residue_count`.
+Cooper-Beta regenerates DSSP annotations for the selected model and converts DSSP `E` ranges into beta-strand segments.[^1] Segments covered by the same side of a DSSP ladder are merged into one physical strand, preserving beta-bulges within a single node. Residues with valid C-alpha coordinates and missing or non-finite N, C, or O coordinates remain in the polymer record, receive `dssp_assignment_available=false`, and contribute to `dssp_unassigned_residue_count`.
 
 ### Strand-adjacency graph
 
@@ -182,11 +205,11 @@ Tarjan low-link traversal identifies bridge edges. Removing those bridges leaves
 2. **Cycle strand count and fraction:** the number of strands in the largest connected component formed by non-bridge edges, reported together with its fraction of all graph strands. An empty graph has a fraction of zero.
 3. **Cycle rank:** the number of independent cycles, calculated from the graph's edge, node, and connected-component counts.
 
-Bridge detection and graph measurement scale linearly with the combined number of graph nodes and edges.
+The depth-first bridge traversal visits each graph node and edge a constant number of times.
 
 ### Direct classification
 
-The default classifier requires all three rule groups to pass at inclusive boundaries:
+The default classifier applies three rule groups with inclusive thresholds:
 
 | Rule group | Default condition |
 | --- | ---: |
@@ -204,7 +227,7 @@ A chain receives `NON_BARREL` when this conjunction is false. The four measureme
 
 ## Configuration
 
-All behavior-changing values are defined in [`config.py`](src/cooper_beta/config.py), with defaults in [`config.yaml`](src/cooper_beta/conf/config.yaml). CLI overrides use Hydra dot notation.
+Configuration fields are defined in [`config.py`](src/cooper_beta/config.py), with defaults in [`config.yaml`](src/cooper_beta/conf/config.yaml). Command-line overrides use Hydra dot notation.
 
 ### Scientific defaults
 
@@ -245,7 +268,7 @@ config = build_config(
 )
 ```
 
-Run `cooper-beta --help` for the complete interface, defaults, output behavior, and failure semantics.
+Run `cooper-beta --help` for command-line options, defaults, output files, and exit codes.
 
 ## Python API
 
@@ -274,19 +297,17 @@ for row in run.rows:
     )
 ```
 
-Common public interfaces are:
-
 | Interface | Purpose |
 | --- | --- |
 | `detect(...)` | Run end-to-end chain classification |
 | `build_config(...)` | Build and validate typed settings |
 | `PipelineRunResult` | Access rows, inputs, output path, settings, and class counts |
-| `DetectionResult` | Access one validated 14-column chain result |
+| `DetectionResult` | Access one 14-column chain result |
 | `ProteinLoader` | Parse structures and obtain per-chain preparation results |
 | `StrandAdjacencyGraph` | Represent an immutable author-chain graph |
 | `StrandGraphMeasurements` | Store the four measured graph values |
 
-User-facing exceptions derive from `CooperBetaError`. Specific subclasses identify invalid configuration, unusable inputs, structure parsing, DSSP availability or execution, missing chains, changed inputs, and output publication failures.
+Exceptions derive from `CooperBetaError`. Subclasses identify invalid configuration, unusable inputs, structure parsing errors, DSSP availability or execution errors, missing chains, changed inputs, and failures while writing output files.
 
 ## Evaluation and experiments
 
@@ -311,7 +332,7 @@ Each target-chain manifest has four columns:
 filename,source_path,structure_sha256,target_author_chain_id
 ```
 
-The evaluator reports target-chain metrics and any-positive-chain file metrics separately. Metrics with an undefined denominator are stored as null values with an accompanying `*_defined` field.
+The evaluator reports target-chain metrics and file-level metrics separately. A file is classified as positive when at least one chain is positive. Metrics with an undefined denominator are stored as null values with an accompanying `*_defined` field.
 
 ### Learned classifier and robustness analyses
 
@@ -321,15 +342,15 @@ The evaluator reports target-chain metrics and any-positive-chain file metrics s
 strand_adjacency_count,cycle_strand_count,cycle_strand_fraction,cycle_rank
 ```
 
-Family groups remain intact across held-out folds. [`scripts/perturbation_eval.py`](scripts/perturbation_eval.py) evaluates sensitivity to controlled coordinate noise. [`scripts/annotate_bfvd_candidates_blastp.py`](scripts/annotate_bfvd_candidates_blastp.py) supports sequence annotation of screened candidates.
+Family groups remain intact across cross-validation folds. [`scripts/perturbation_eval.py`](scripts/perturbation_eval.py) evaluates sensitivity to controlled coordinate noise. [`scripts/annotate_bfvd_candidates_blastp.py`](scripts/annotate_bfvd_candidates_blastp.py) supports sequence annotation of screened candidates.
 
-Adapters for Foldseek, IsItABarrel, and PRED-TMBB2 are documented under [`external_methods`](external_methods). Their normalized outputs share explicit author-chain identifiers and can be compared with Cooper-Beta evaluation tables.
+Adapters for Foldseek, IsItABarrel, and PRED-TMBB2 are documented under [`external_methods`](external_methods). Their standardized output tables use author-chain identifiers for comparison with Cooper-Beta results.
 
 ## Reproducibility
 
-Cooper-Beta records the resolved configuration, discovered inputs, package version, DSSP executable and version, execution settings, and output state in the run manifest. Input and output ordering are deterministic. Preparation caching uses the same resolved scientific inputs that define the prepared payload.
+Cooper-Beta records the resolved configuration, input files, package version, DSSP executable and version, execution settings, and output status in the run manifest. Input and output ordering are deterministic. Cached structure preparation results are reused when the inputs, software, and preparation settings match.
 
-The repository provides two locked environment routes:
+Dependency versions are recorded in:
 
 - `uv.lock` for Python package resolution
 - `environment.yml` and `conda-lock.yml` for Python plus DSSP
@@ -375,9 +396,28 @@ Initial public release.
 - Combines DSSP ladder adjacencies with multi-residue C-alpha contacts
 - Measures `strand_adjacency_count`, `cycle_strand_count`, `cycle_strand_fraction`, and `cycle_rank`
 - Applies three configurable direct-classifier rule groups
-- Produces a fixed 14-column chain result and a bound run manifest
+- Produces a fixed 14-column chain result and a run manifest linked to its output file
 - Supports PDB, mmCIF, and configured gzip-compressed inputs
 - Provides typed configuration, grouped evaluation tools, locked environments, and two curated positive examples
+
+## Citation
+
+If you use Cooper-Beta in your research, please cite:
+
+> Zhong, S., & Jiang, Y. (2026). Geometric Intuition Enables Resource-Efficient Screening for β-Barrel-Like Folds in Viral Structural Dark Matter. *Proteins: Structure, Function, and Bioinformatics*. [https://doi.org/10.1002/prot.70192](https://doi.org/10.1002/prot.70192)
+
+```bibtex
+@article{Zhong2026CooperBeta,
+  author  = {Zhong, Shuyu and Jiang, Yuying},
+  title   = {Geometric Intuition Enables Resource-Efficient Screening for {$\beta$}-Barrel-Like Folds in Viral Structural Dark Matter},
+  journal = {Proteins: Structure, Function, and Bioinformatics},
+  year    = {2026},
+  doi     = {10.1002/prot.70192},
+  url     = {https://doi.org/10.1002/prot.70192}
+}
+```
+
+The repository also provides [`CITATION.cff`](CITATION.cff) for GitHub's **Cite this repository** feature, with the paper as the preferred citation.
 
 ## License
 
@@ -385,4 +425,4 @@ Cooper-Beta source code is released under the [MIT License](LICENSE). The files 
 
 ## References
 
-[^1]: Van Ginkel, G. et al. (2025). "DSSP 4: FAIR annotation of protein secondary structure." _Protein Science_. https://doi.org/10.1002/pro.70208
+[^1]: Hekkelman, M. L. et al. (2025). "DSSP 4: FAIR annotation of protein secondary structure." _Protein Science_, 34(8), e70208. https://doi.org/10.1002/pro.70208

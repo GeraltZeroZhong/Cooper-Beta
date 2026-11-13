@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Download all structures referenced by an mpstruc beta-barrel XML dump and classify
-entries at the assembly/entity level for canonical transmembrane beta-barrel curation.
+Download structures referenced by an mpstruc beta-barrel XML snapshot and classify
+entries by biological assembly and protein entity for transmembrane beta-barrel curation.
 
-What this script does
----------------------
+Workflow
+--------
 1. Parse an mpstruc XML dump (master proteins + member proteins + optional related entries).
 2. Download entry mmCIF files from RCSB.
 3. Download available biological assembly mmCIF files.
@@ -22,14 +22,14 @@ What this script does
    - PARTIAL_OR_DOMAIN_ONLY
    - DESIGNED_OR_OUT_OF_SCOPE
    - NEEDS_REVIEW
-6. Create symlink/copy based file organization by mpstruc subgroup and by class.
+6. Organize files by mpstruc subgroup and class using symbolic links or copies.
 
-Important note
---------------
-The automatic classification creates review strata, not positive ground truth.
-Publication mode requires a frozen approval manifest with one exact author-chain
-target and independent curation evidence per accepted structure; unapproved
-automatic candidates never enter the benchmark positive set.
+Benchmark labels
+----------------
+The automatic classification groups candidates for curation. Publication mode
+requires a fixed manifest with one author-chain target and independent curation
+evidence per accepted structure. The benchmark positive set contains the targets
+selected by this manifest.
 
 Recommended usage
 -----------------
@@ -234,11 +234,9 @@ def parse_mpstruc_xml(path: str, include_related: bool = True) -> list[dict[str,
     """
     Parse the mpstruc dump using a tolerant line-based state machine.
 
-    Why not a strict XML parser?
-    The mpstruc text dump mixes XML-like structure with HTML entities/tags and
-    a number of malformed records. For this file, line-based parsing of the
-    specific fields we care about is substantially more robust than full XML
-    recovery parsing.
+    The mpstruc text dump mixes XML-like structure with HTML entities and tags,
+    and includes malformed records. Line-based parsing extracts the supported
+    fields from these records.
     """
     raw_lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
 
@@ -1246,9 +1244,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Output: parsed and classified metadata CSVs, entry and optional assembly files, "
-            "curation tables, approved positive structures, summary.json, and run_manifest.json. "
+            "curation tables, curated positive structures, summary.json, and run_manifest.json. "
             "The output directory must be new or empty. Argument errors exit with status 2; "
-            "input, download, classification, or approval failures exit nonzero."
+            "input, download, classification, or curation-table errors exit nonzero."
         ),
     )
     ap.add_argument(
@@ -1273,7 +1271,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["publication", "exploratory"],
         default="publication",
         help=(
-            "publication uses a local structure archive and an approval manifest; exploratory "
+            "publication uses a local structure archive and a curated-label manifest; exploratory "
             "permits downloads and produces candidate tables for curation."
         ),
     )
@@ -1319,7 +1317,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="CSV",
         help=(
-            "Frozen CSV truth manifest with filename,target_author_chain_id,group_id,curation_evidence; "
+            "Curated positive targets in a fixed CSV with columns "
+            "filename,target_author_chain_id,group_id,curation_evidence; "
             "required in publication mode."
         ),
     )
@@ -1350,7 +1349,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=defaults.canonical_min_beta_strands,
         metavar="N",
-        help="Minimum beta-strand count for the automatic canonical-barrel candidate stratum.",
+        help="Minimum beta-strand count for self-contained barrel candidates.",
     )
     ap.add_argument(
         "--assembly-formed-max-beta-strands",
@@ -1364,7 +1363,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=defaults.assembly_formed_min_chain_copies,
         metavar="N",
-        help="Minimum same-chain copies supporting an assembly-formed candidate.",
+        help="Minimum copies of the candidate protein entity supporting an assembly-formed candidate.",
     )
     ap.add_argument(
         "--partial-modeled-fraction",

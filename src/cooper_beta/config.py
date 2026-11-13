@@ -147,9 +147,13 @@ class StrandAdjacencyCountRuleConfig:
 
 @dataclass(frozen=True)
 class CycleStrandCountFractionRuleConfig:
-    minimum_count: int = _parameter("Minimum strands in the largest closed component.", gt=0)
+    minimum_count: int = _parameter(
+        "Minimum strands in the largest cycle-supported connected component.", gt=0
+    )
     minimum_fraction: float = _parameter(
-        "Minimum fraction of all strands in the largest closed component.", gt=0.0, le=1.0
+        "Minimum fraction of all strands in the largest cycle-supported connected component.",
+        gt=0.0,
+        le=1.0,
     )
 
 

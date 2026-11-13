@@ -34,7 +34,7 @@ TRUTH_MANIFEST_COLUMNS = (
 
 @dataclass(frozen=True, slots=True)
 class CandidateTruth:
-    """One immutable target-chain identity from a canonical truth manifest."""
+    """One target-chain identity from a target-chain manifest."""
 
     filename: str
     source_path: str
@@ -106,7 +106,7 @@ def resolve_error_policy(policy: MetricErrorPolicy | str) -> MetricErrorPolicy:
 
 
 def ensure_columns(dataframe: pd.DataFrame) -> pd.DataFrame:
-    """Require the fixed public detector schema without imputing scientific data."""
+    """Check detector column names, column order, and result values."""
     _require_pandas()
     if tuple(dataframe.columns) != DEFAULT_RESULT_COLUMNS:
         raise MetricInputError(
@@ -187,10 +187,9 @@ def assign_manifest_candidate_truth(
 ) -> tuple[pd.DataFrame, dict[str, int]]:
     """Validate and annotate exactly one manifest-defined candidate per file.
 
-    This is the sole implementation of manifest-to-detector matching used by
-    both output annotation and metric computation. A candidate may be absent
-    only when the detector emitted one file-level ``preparation`` ERROR row
-    with an empty chain; a chain-specific/partner ERROR is never relabelled.
+    A file-level ``preparation`` ERROR with an empty chain represents the
+    manifest-selected target when its chain row is absent. Chain-specific
+    errors retain their original chain identities.
     """
     if truth_value not in {0, 1}:
         raise ValueError("truth_value must be 0 or 1")
@@ -458,8 +457,8 @@ def compute_chain_metrics(
     """
     Compute chain-level metrics at manifest-defined chain sampling units.
 
-    Partner chains are deliberately unlabeled. Positive and negative observations
-    use the same manifest-selected, one-target-chain-per-file sampling unit.
+    Each positive or negative structure contributes the target chain selected
+    by its manifest. Partner chains are excluded from the chain-level metrics.
     """
     if positive_candidate_truth is None:
         raise MetricInputError(

@@ -77,13 +77,13 @@ def main(argv: list[str] | None = None) -> None:
             "Detect beta-barrel-like protein chains in PDB, mmCIF, or BinaryCIF structures. A directory "
             "input is searched recursively. Options that use KEY=VALUE syntax override the "
             "default configuration. A coordinate-supported strand adjacency "
-            "requires at least two C-alpha pairs within 6.8 Angstrom, with two distinct "
+            "requires at least two C-alpha pairs within 6.8 angstroms, with two distinct "
             "contacting residues on each strand. BARREL requires all three rule groups: "
             "strand_adjacency_count >= 8; cycle_strand_count >= 4 and "
             "cycle_strand_fraction >= 0.05; cycle_rank >= 1. The cycle-strand fields describe "
-            "the largest closed component. Coordinate-only mmCIF "
+            "the largest cycle-supported connected component. Coordinate-only mmCIF "
             "inputs are handled per author chain; linked modified amino acids use a maximum C-N "
-            "distance of 1.8 Angstrom "
+            "distance of 1.8 angstroms "
             "(input.atom_site_only_max_peptide_bond_distance_angstrom=1.8)."
         ),
         epilog=(

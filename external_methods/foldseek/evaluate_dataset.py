@@ -1076,7 +1076,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="python external_methods/foldseek/evaluate_dataset.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Evaluate the Foldseek global-TMalign baseline on labeled Cooper-Beta structure "
+            "Evaluate the Foldseek global TM-align baseline on labeled Cooper-Beta structure "
             "directories using an explicit reference panel and homology-group assignments."
         ),
         epilog=(
@@ -1158,7 +1158,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MIN_RESIDUES,
         metavar="RESIDUES",
-        help="Minimum alpha-carbon residue count required to evaluate a chain.",
+        help="Minimum number of residues with C-alpha coordinates required to evaluate a chain.",
     )
     parser.add_argument(
         "--create-index",
@@ -1170,7 +1170,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_ALIGNMENT_TYPE,
         metavar="N",
-        help="Foldseek --alignment-type value; 1 selects global TMalign.",
+        help="Foldseek --alignment-type value; 1 selects global TM-align.",
     )
     parser.add_argument(
         "--score-mode",

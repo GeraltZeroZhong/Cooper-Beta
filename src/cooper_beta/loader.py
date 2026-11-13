@@ -1045,16 +1045,17 @@ class ChainPreparationResult:
 
     @property
     def failed(self) -> bool:
-        """Whether this chain could not be prepared for scientific analysis."""
+        """Whether preparation of this chain failed."""
 
         return self.error_code is not None
 
 
 class ProteinLoader:
     """
-    Load PDB/mmCIF structures, run DSSP, and extract per-chain CA data.
+    Load PDB, mmCIF, or BinaryCIF structures, run DSSP, and extract per-chain C-alpha data.
 
-    Polymer positions follow ``POLYMER_POSITION_POLICY``.
+    Polymer positions follow the declared polymer sequence when available and
+    the observed residue order for coordinate-only inputs.
     """
 
     polymer_position_policy = POLYMER_POSITION_POLICY
@@ -1596,7 +1597,7 @@ class ProteinLoader:
         return str(getattr(error, "error_code", "UNEXPECTED_CHAIN_PREPARATION_FAILURE"))
 
     def prepare_chain(self, chain_id: str) -> ChainPreparationResult:
-        """Prepare one chain without allowing its failure to discard sibling chains."""
+        """Prepare one chain and report its outcome independently of other chains."""
 
         resolved_chain_id, chain = self._resolve_chain(chain_id)
         cached = self._chain_preparation_results.get(resolved_chain_id)
@@ -1664,7 +1665,7 @@ class ProteinLoader:
         return result.strand_graph
 
     def get_ca_data(self, chain_id: str) -> list[dict[str, object]]:
-        """Return CA records when the requested chain has valid DSSP preparation."""
+        """Return C-alpha records when the requested chain has valid DSSP preparation."""
 
         result = self.prepare_chain(chain_id)
         self._raise_chain_preparation_error(result)

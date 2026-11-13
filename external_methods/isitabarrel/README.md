@@ -1,22 +1,21 @@
-# IsItABarrel Structure-Map Baseline
+# IsItABarrel structure-map baseline
 
-This adapter treats
-[SluskyLab/isitabarrel](https://github.com/SluskyLab/isitabarrel) as an
-external baseline for Cooper-Beta evaluation. Cooper-Beta labels this variant
-`isitabarrel_structure_map` because it runs the IsItABarrel heuristics on
-contact maps derived from PDB/CIF structures, not on the original evolutionary
-contact maps used in the publication.
+This adapter runs
+[IsItABarrel](https://github.com/SluskyLab/isitabarrel) on contact maps derived
+from PDB/mmCIF coordinates and reports the method as
+`isitabarrel_structure_map`. The [published method](https://doi.org/10.1073/pnas.2220762120)
+uses evolutionary contact maps.
 
-The official IsItABarrel script is not vendored here. It is licensed under
-AGPL-3.0, while Cooper-Beta is MIT-licensed, so this directory only contains
-the invocation and result-parsing layer.
+Install the official IsItABarrel script separately under its AGPL-3.0 license.
+The MIT-licensed Cooper-Beta adapter handles contact-map generation, program
+execution, and result parsing.
 
-## Expected Inputs For The Upstream Runner
+## Runner inputs
 
 The upstream script expects:
 
-- a protein-id list, one id per line or as the first tab-separated column;
-- a directory containing one contact-map pickle per id, named `<id>.pkl`;
+- a protein-ID list, one ID per line or as the first tab-separated column;
+- a directory containing one contact-map pickle per ID, named `<id>.pkl`;
 - an official `isitabarrel.py` checkout, provided with `--script` or the
   `ISITABARREL_SCRIPT` environment variable.
 
@@ -30,11 +29,9 @@ parses that file and normalizes each row into:
 - `score`: selected decision score, defaulting to `CC2_TO_H4`, which the
   upstream comments recommend for reproducing the publication results
 
-## Structure Map Workflow
+## Contact maps from structures
 
-When you already have PDB/CIF/mmCIF structures, generate structure-derived
-contact maps directly instead of running a FASTA-to-contact-map prediction
-pipeline:
+Generate contact maps from PDB or mmCIF structures and run IsItABarrel:
 
 ```bash
 python external_methods/isitabarrel/structure_map.py \
@@ -47,15 +44,15 @@ python external_methods/isitabarrel/structure_map.py \
 The generator writes:
 
 - `maps/<sample_id>.pkl`: NumPy `float32` `L x L` contact maps
-- `protid_list.tsv`: sample ids for the upstream script
+- `protid_list.tsv`: sample IDs for the upstream script
 - `residue_mapping.csv`: matrix index to source residue mapping
 
-The default map uses CA-CA contacts within 8.0 Angstrom, zeros contacts with
-sequence distance of two residues or less, and skips chains with fewer than 15
-CA residues to avoid an upstream IsItABarrel indexing failure on very short
-chains.
+The default map records C-alpha contacts at distances of 8.0 Å or less. Entries
+within two positions of the diagonal are set to zero, using the order of
+residues with observed C-alpha coordinates. The adapter processes chains with
+at least 15 C-alpha residues to satisfy the upstream contact-filtering minimum.
 
-## Existing Map Example
+## Run existing maps
 
 ```bash
 python external_methods/isitabarrel/runner.py \
@@ -64,7 +61,3 @@ python external_methods/isitabarrel/runner.py \
   --script path/to/isitabarrel.py \
   --out eval_outputs/isitabarrel_structure_map.csv
 ```
-
-For smoke tests, this repository uses a tiny fake upstream script under
-`data/external_methods/isitabarrel_smoke/` so the adapter can be tested without
-vendoring or downloading AGPL code.
