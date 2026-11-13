@@ -380,6 +380,10 @@ cooper-beta path/to/structure.cif \
 
 ## Release notes
 
+### 1.0.2
+
+Adds the published paper citation and improves documentation clarity and terminology.
+
 ### 1.0.1
 
 - Adds BinaryCIF (`.bcif`, `.bcif.gz`) through the RCSB `mmcif` reader, preserving polymer declarations and atom identities
