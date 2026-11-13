@@ -1,4 +1,4 @@
-# Single source of behavioral defaults for Cooper-Beta.
+# Default Cooper-Beta settings.
 hydra:
   job:
     chdir: false

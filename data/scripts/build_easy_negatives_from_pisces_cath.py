@@ -1,30 +1,29 @@
 #!/usr/bin/env python3
 
 """
-Build a chain-level easy-negative dataset from PISCES + CATH.
+Build a chain-level negative-candidate dataset from PISCES and CATH.
 
-What this script does
----------------------
+Workflow
+--------
 1. Downloads (or reuses) a precompiled non-redundant PISCES chain list.
 2. Downloads (or reuses) the CATH domain list.
-3. Maps PISCES chains to CATH class / architecture / topology at chain level.
+3. Maps PISCES chains to CATH class, architecture, and topology.
 4. Excludes mpstruc-derived positives and user-provided exclusions.
 5. Selects a structurally diverse negative-candidate panel (default: 500 chains)
-   across CATH classes 1/3/4; Mainly Beta is excluded.
-6. Stages the selected full-entry mmCIF files from a frozen archive or RCSB.
-7. Validates the target author chain and complete polymer declaration without
-   reserializing a lossy chain-only coordinate file.
+   across CATH classes 1, 3, and 4.
+6. Retrieves the selected full-entry mmCIF files from a fixed archive or RCSB.
+7. Checks the target author chain and complete polymer declaration while
+   retaining the full-entry coordinates.
 8. Writes complete CSV manifests for candidates, exclusions and final selections.
 
 Notes
 -----
-- PISCES provides culled PDB chain lists with quality / sequence-identity filters.
+- PISCES provides culled PDB chain lists with quality and sequence-identity filters.
 - CATH provides domain-level classification; this script converts those domain
-  annotations into chain-level dominant class / topology labels.
-- The sampling unit here is chain-level, which matches a typical chain-level
-  negative set better than directly using CATH domains.
-- CATH assignments create candidate strata only. Publication mode requires an
-  independent, frozen NON_BARREL approval for every final selected chain.
+  annotations into dominant class and topology labels for each chain.
+- CATH assignments define the candidate sampling strata. Publication mode requires
+  a fixed manifest with an independently curated NON_BARREL label and supporting
+  evidence for every selected chain.
 
 Typical usage
 -------------
@@ -1161,13 +1160,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="python data/scripts/build_easy_negatives_from_pisces_cath.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Build a chain-level negative candidate set from a PISCES sequence-reduced list "
+            "Build a chain-level negative candidate set from a non-redundant PISCES list "
             "and CATH structural classifications. Selection applies explicit class quotas, "
             "topology diversity limits, exclusions, and a reproducible random seed."
         ),
         epilog=(
             "Output: metadata CSVs for parsed inputs, candidates, exclusions, selections, and "
-            "approved negatives; selected entry mmCIF files; selection_summary.json; and "
+            "curated negatives; selected entry mmCIF files; selection_summary.json; and "
             "run_manifest.json. The output directory must be new or empty. Argument errors exit "
             "with status 2; input, download, or selection failures exit nonzero."
         ),
@@ -1183,7 +1182,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=["publication", "exploratory"],
         default="publication",
         help=(
-            "publication uses explicit local source snapshots and an approval manifest; "
+            "publication uses explicit local source snapshots and a curated-label manifest; "
             "exploratory permits source discovery, downloads, and optional heuristic mapping."
         ),
     )
@@ -1357,7 +1356,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="CSV",
         help=(
-            "Frozen CSV with exact pdb_id,target_author_chain_id,group_id,curation_evidence truth; "
+            "Curated NON_BARREL labels in a fixed CSV with columns "
+            "pdb_id,target_author_chain_id,group_id,curation_evidence; "
             "required in publication mode."
         ),
     )

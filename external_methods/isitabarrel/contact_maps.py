@@ -284,12 +284,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="python external_methods/isitabarrel/contact_maps.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Generate one alpha-carbon contact map per eligible protein chain for the "
+            "Generate one C-alpha contact map per eligible protein chain for the "
             "IsItABarrel adapter. PDB or mmCIF directories are searched recursively."
         ),
         epilog=(
             "Output: <OUT_DIR>/maps/*.pkl, protid_list.tsv, and residue_mapping.csv. Chains "
-            "shorter than --min-residues alpha-carbon observations are omitted. Invalid arguments "
+            "require at least --min-residues residues with C-alpha coordinates. Invalid arguments "
             "exit with status 2; structure parsing or output failures exit nonzero."
         ),
     )
@@ -309,21 +309,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_CA_CUTOFF,
         metavar="ANGSTROMS",
-        help="Inclusive alpha-carbon distance cutoff used to define a contact.",
+        help="Inclusive C-alpha distance cutoff used to define a contact.",
     )
     parser.add_argument(
         "--local-exclusion",
         type=int,
         default=DEFAULT_LOCAL_EXCLUSION,
         metavar="RESIDUES",
-        help="Set contacts to zero when sequence-index distance is at most this value.",
+        help="Set contacts to zero when their matrix-index separation is at most this value.",
     )
     parser.add_argument(
         "--min-residues",
         type=int,
         default=DEFAULT_MIN_RESIDUES,
         metavar="RESIDUES",
-        help="Minimum alpha-carbon residue count required to export a chain contact map.",
+        help="Minimum number of residues with C-alpha coordinates required to export a chain contact map.",
     )
     return parser
 

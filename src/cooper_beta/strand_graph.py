@@ -24,7 +24,7 @@ def _nonnegative_integer(value: object, field_name: str) -> int:
 
 @dataclass(frozen=True, order=True)
 class StrandRange:
-    """Inclusive polymer-index range assigned to one DSSP beta strand."""
+    """Inclusive polymer-index range assigned to one DSSP beta-strand."""
 
     start_polymer_index: int
     end_polymer_index: int
@@ -84,7 +84,7 @@ class StrandEdge:
 
 @dataclass(frozen=True)
 class StrandAdjacencyGraph:
-    """Validated, immutable strand adjacency graph for one author chain."""
+    """Validated, immutable strand-adjacency graph for one author chain."""
 
     author_chain_id: str
     nodes: tuple[StrandNode, ...]
@@ -211,10 +211,9 @@ def _fraction(numerator: int, denominator: int) -> float:
 def measure_strand_graph(graph: StrandAdjacencyGraph) -> StrandGraphMeasurements:
     """Measure the four values used by the three classification rule groups.
 
-    In an undirected graph, an edge belongs to at least one cycle exactly when
-    it is not a bridge. This definition excludes tree branches and the bridge
-    between two otherwise cyclic components without requiring a Hamiltonian
-    cycle or forcing every detected strand into one ring.
+    Removing bridges from an undirected graph leaves the edges that belong to
+    at least one cycle. The cycle-strand count covers the largest connected
+    component of these edges, and the cycle rank counts independent cycles.
     """
 
     if not isinstance(graph, StrandAdjacencyGraph):

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Run a leakage-resistant Cooper-Beta decision-model experiment.
+"""Evaluate Cooper-Beta logistic regression with nested, grouped cross-validation.
 
-The observation unit is exactly one manifest-selected target chain per input
-structure.  Detector outputs are consumed as immutable artifacts: this script
-never runs the detector, invents labels for partner chains, imputes features, or
-silently excludes errors.
+Each input structure contributes one manifest-selected target chain. The script
+reads existing detector results and requires complete features and labels for
+all selected targets. Detector errors stop the experiment.
 
-Performance estimation uses nested StratifiedGroupKFold.  Hyperparameter and
-threshold selection happen only inside each outer training partition.  A
-separate full-data tuning pass selects the deployable model; its tuning score is
-not reported as a performance estimate.
+Performance estimation uses nested StratifiedGroupKFold. Hyperparameters and
+probability thresholds are selected within each outer training partition.
+Performance estimates come from predictions on the outer test folds. A separate
+tuning pass on the full dataset selects the model for deployment.
 """
 
 from __future__ import annotations
@@ -85,7 +84,7 @@ OUTPUT_FILENAMES = (
 
 
 class ExperimentInputError(ValueError):
-    """Raised when an input violates the scientific experiment contract."""
+    """Raised when experiment inputs fail the data or configuration requirements."""
 
 
 @dataclass(frozen=True)
@@ -1248,7 +1247,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python scripts/nested_grouped_decision_experiment.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Estimate a fixed logistic Cooper-Beta decision model with nested, stratified, "
+            "Evaluate a Cooper-Beta logistic regression model with nested, stratified, "
             "homology-grouped cross-validation. Each structure contributes the single target "
             "chain selected by its label manifest."
         ),
@@ -1257,7 +1256,7 @@ def build_parser() -> argparse.ArgumentParser:
             "run_manifest.json in an initially empty directory. The outer folds estimate "
             "performance. Inner folds choose C and the probability threshold using only "
             "outer-training samples. A separate grouped fit produces the deployment model. "
-            "Invalid input contracts exit with status 2; unexpected fitting failures exit nonzero."
+            "Invalid inputs exit with status 2; unexpected fitting failures exit nonzero."
         ),
     )
     parser.add_argument(

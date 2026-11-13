@@ -304,7 +304,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Output: <OUT_DIR>/chains/*.pdb, chain_manifest.csv, and residue_mapping.csv. "
-            "Chains shorter than --min-residues alpha-carbon observations are omitted. Invalid "
+            "Chains require at least --min-residues residues with C-alpha coordinates. Invalid "
             "arguments exit with status 2; structure parsing or output failures exit nonzero."
         ),
     )
@@ -324,7 +324,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MIN_RESIDUES,
         metavar="RESIDUES",
-        help="Minimum alpha-carbon residue count required to export a chain.",
+        help="Minimum number of residues with C-alpha coordinates required to export a chain.",
     )
     return parser
 

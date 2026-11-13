@@ -1,4 +1,4 @@
-"""Foldseek global-TMalign structure-search baseline adapter."""
+"""Foldseek global TM-align structure-search baseline adapter."""
 
 from .runner import (
     BASELINE_NAME,

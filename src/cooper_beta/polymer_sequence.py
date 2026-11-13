@@ -1,9 +1,8 @@
-"""Strict extraction of declared complete protein-polymer sequences.
+"""Extract complete protein sequences from structure sequence declarations.
 
-Coordinate observations are deliberately not a sequence source.  PDB inputs
-must carry complete ``SEQRES`` declarations.  mmCIF inputs must carry mutually
-consistent ``entity_poly``/``entity_poly_seq`` declarations and an exact,
-one-to-one label-to-author chain mapping.
+PDB inputs require complete ``SEQRES`` declarations. mmCIF inputs require
+consistent ``entity_poly``/``entity_poly_seq`` declarations and a one-to-one
+mapping between label and author chain identifiers.
 """
 
 from __future__ import annotations
@@ -470,7 +469,7 @@ def declared_polymer_sequences(path: str | Path) -> list[CompletePolymerSequence
 
 
 def observed_author_chain_ids(path: str | Path) -> frozenset[str]:
-    """Return first-model author-chain IDs without treating coordinates as sequence truth."""
+    """Return author-chain IDs observed in the first coordinate model."""
 
     source = Path(path).expanduser().resolve()
     if not source.is_file():

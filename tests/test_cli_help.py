@@ -25,7 +25,7 @@ CLI_HELP_CASES = (
     ),
     (("external_methods/foldseek/evaluate_dataset.py",), "author_chain_id,group_id"),
     (("external_methods/foldseek/runner.py",), "coverage thresholds"),
-    (("external_methods/foldseek/structure_search.py",), "global TMalign"),
+    (("external_methods/foldseek/structure_search.py",), "global TM-align"),
     (("external_methods/foldseek/structures.py",), "chain_manifest.csv"),
     (("external_methods/isitabarrel/contact_maps.py",), "protid_list.tsv"),
     (("external_methods/isitabarrel/runner.py",), "score greater than zero"),
@@ -82,7 +82,7 @@ def test_detector_help_explains_contact_and_three_rule_defaults() -> None:
 
     assert completed.returncode == 0, completed.stderr
     compact_help = " ".join(completed.stdout.split())
-    assert "at least two C-alpha pairs within 6.8 Angstrom" in compact_help
+    assert "at least two C-alpha pairs within 6.8 angstroms" in compact_help
     assert "two distinct contacting residues on each strand" in compact_help
     assert "strand_adjacency_count >= 8" in compact_help
     assert "cycle_strand_count >= 4" in compact_help

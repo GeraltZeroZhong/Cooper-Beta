@@ -103,7 +103,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
             "Extract eligible chains from PDB or mmCIF structures, search them with Foldseek "
-            "global TMalign, and normalize one baseline decision per chain."
+            "global TM-align, and normalize one baseline decision per chain."
         ),
         epilog=(
             "Output: generated query chains, residue mapping, and raw Foldseek files under "
@@ -146,7 +146,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_MIN_RESIDUES,
         metavar="RESIDUES",
-        help="Minimum alpha-carbon residue count required to search a chain.",
+        help="Minimum number of residues with C-alpha coordinates required to search a chain.",
     )
     parser.add_argument(
         "--create-index",
@@ -158,7 +158,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_ALIGNMENT_TYPE,
         metavar="N",
-        help="Foldseek --alignment-type value; 1 selects global TMalign.",
+        help="Foldseek --alignment-type value; 1 selects global TM-align.",
     )
     parser.add_argument(
         "--score-mode",

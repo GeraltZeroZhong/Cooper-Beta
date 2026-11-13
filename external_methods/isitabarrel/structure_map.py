@@ -75,7 +75,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="python external_methods/isitabarrel/structure_map.py",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
-            "Generate chain-level alpha-carbon contact maps from PDB or mmCIF structures, run "
+            "Generate chain-level C-alpha contact maps from PDB or mmCIF structures, run "
             "IsItABarrel, and normalize one baseline decision per chain."
         ),
         epilog=(
@@ -111,21 +111,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_CA_CUTOFF,
         metavar="ANGSTROMS",
-        help="Inclusive alpha-carbon distance cutoff used to define a contact.",
+        help="Inclusive C-alpha distance cutoff used to define a contact.",
     )
     parser.add_argument(
         "--local-exclusion",
         type=int,
         default=DEFAULT_LOCAL_EXCLUSION,
         metavar="RESIDUES",
-        help="Set contacts to zero when sequence-index distance is at most this value.",
+        help="Set contacts to zero when their matrix-index separation is at most this value.",
     )
     parser.add_argument(
         "--min-residues",
         type=int,
         default=DEFAULT_MIN_RESIDUES,
         metavar="RESIDUES",
-        help="Minimum alpha-carbon residue count required to evaluate a chain.",
+        help="Minimum number of residues with C-alpha coordinates required to evaluate a chain.",
     )
     parser.add_argument(
         "--decision-column",

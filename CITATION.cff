@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use Cooper-Beta in your research, please cite the article below."
+type: software
+title: Cooper-Beta
+authors:
+  - family-names: Zhong
+    given-names: Shuyu
+    orcid: "https://orcid.org/0009-0000-6218-1271"
+repository-code: "https://github.com/GeraltZeroZhong/Cooper-Beta"
+license: MIT
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Zhong
+      given-names: Shuyu
+      orcid: "https://orcid.org/0009-0000-6218-1271"
+    - family-names: Jiang
+      given-names: Yuying
+      orcid: "https://orcid.org/0009-0003-7932-9625"
+  title: "Geometric Intuition Enables Resource-Efficient Screening for β-Barrel-Like Folds in Viral Structural Dark Matter"
+  journal: "Proteins: Structure, Function, and Bioinformatics"
+  year: 2026
+  month: 10
+  date-published: "2026-10-22"
+  doi: "10.1002/prot.70192"
+  url: "https://doi.org/10.1002/prot.70192"

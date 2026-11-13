@@ -223,7 +223,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         description=(
             "Annotate selected Cooper-Beta BFVD candidate chains with blastp. Complete protein "
-            "sequences come from the supplied sequence-truth manifest."
+            "sequences come from the supplied complete-sequence manifest."
         ),
         epilog=(
             "Output: candidate_manifest.csv, candidate_sequences.faa, blastp.tsv and its "
@@ -354,7 +354,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=1e-5,
         metavar="EVALUE",
-        help="Maximum e-value for a hit to count as an annotation.",
+        help="Maximum E-value for a hit to count as an annotation.",
     )
     parser.add_argument(
         "--min-pident",
